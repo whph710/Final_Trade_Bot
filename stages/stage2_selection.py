@@ -76,14 +76,22 @@ async def run_stage2(
                 interval=config.TIMEFRAME_LONG
             )
 
-            if not candles_1h or not candles_4h:
+            # ✅ КРИТИЧНО: Проверка на None (не на truthy/falsy!)
+            if candles_1h is None or candles_4h is None:
+                logger.debug(f"Stage 2: Normalization failed for {symbol}")
                 continue
 
             # Рассчитываем compact indicators
             indicators_1h = _calculate_compact_indicators(candles_1h)
             indicators_4h = _calculate_compact_indicators(candles_4h)
 
-            if not indicators_1h or not indicators_4h:
+            # ✅ КРИТИЧНО: Проверка на None + наличие 'current'
+            if indicators_1h is None or indicators_4h is None:
+                logger.debug(f"Stage 2: Indicators calculation failed for {symbol}")
+                continue
+
+            if not indicators_1h.get('current') or not indicators_4h.get('current'):
+                logger.debug(f"Stage 2: Missing 'current' data for {symbol}")
                 continue
 
             # Формируем данные для AI
@@ -131,14 +139,7 @@ def _calculate_compact_indicators(candles) -> Dict:
     Рассчитать compact indicators для Stage 2
 
     Returns:
-        {
-            'current': {...},
-            'ema9': [...],
-            'ema21': [...],
-            'ema50': [...],
-            'rsi': [...],
-            'volume_ratio': [...]
-        }
+        Dict с indicators ИЛИ None при ошибке (не пустой dict!)
     """
     from indicators import analyze_triple_ema, analyze_rsi, analyze_volume
 
@@ -152,8 +153,10 @@ def _calculate_compact_indicators(candles) -> Dict:
         # Volume
         volume_analysis = analyze_volume(candles)
 
+        # ✅ ДОБАВЬ ЭТУ ПРОВЕРКУ:
         if not ema_analysis or not rsi_analysis or not volume_analysis:
-            return {}
+            logger.debug("Stage 2: One or more indicators returned None")
+            return None  # ← Возвращаем None вместо {}
 
         # Извлекаем историю (последние 30 значений)
         from indicators.ema import calculate_ema
@@ -166,7 +169,7 @@ def _calculate_compact_indicators(candles) -> Dict:
         rsi = calculate_rsi(candles.closes, 14)
         volume_ratios = calculate_volume_ratio(candles.volumes, 20)
 
-        return {
+        result = {
             'current': {
                 'price': float(candles.closes[-1]),
                 'ema9': ema_analysis.ema9_current,
@@ -182,9 +185,16 @@ def _calculate_compact_indicators(candles) -> Dict:
             'volume_ratio': [float(x) for x in volume_ratios[-30:]]
         }
 
+        # ✅ ДОБАВЬ ФИНАЛЬНУЮ ПРОВЕРКУ:
+        if not result.get('current'):
+            logger.debug("Stage 2: Failed to build 'current' dict")
+            return None
+
+        return result
+
     except Exception as e:
         logger.error(f"Compact indicators calculation error: {e}")
-        return {}
+        return None  # ← Возвращаем None вместо {}
 
 
 def _extract_last_candles(candles_raw: List, count: int) -> List:
