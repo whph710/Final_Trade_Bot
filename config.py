@@ -2,8 +2,9 @@
 Trading Bot Configuration — Triple EMA Strategy
 Файл: config.py
 
-Все параметры стратегии и настройки системы.
-Секретные данные (API keys) хранятся в .env
+ОБНОВЛЕНО:
+- Добавлены пути для logs/ и signals/
+- Автоматическое создание директорий
 """
 
 import os
@@ -23,7 +24,6 @@ def load_env():
             line = line.strip()
             if line and not line.startswith('#') and '=' in line:
                 key, value = line.split('=', 1)
-                # Удаляем inline комментарии
                 if '#' in value:
                     value = value.split('#')[0]
                 os.environ[key.strip()] = value.strip()
@@ -58,6 +58,20 @@ def safe_bool(value: str) -> bool:
 load_env()
 
 # ============================================================================
+# DIRECTORIES (✅ НОВОЕ)
+# ============================================================================
+PROJECT_ROOT = Path(__file__).parent
+
+LOGS_DIR = PROJECT_ROOT / 'logs'
+SIGNALS_DIR = PROJECT_ROOT / 'signals'
+BACKTEST_DIR = SIGNALS_DIR / 'backtest_results'
+
+# Создаём директории если не существуют
+LOGS_DIR.mkdir(exist_ok=True)
+SIGNALS_DIR.mkdir(exist_ok=True)
+BACKTEST_DIR.mkdir(exist_ok=True)
+
+# ============================================================================
 # API KEYS (из .env)
 # ============================================================================
 DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
@@ -70,8 +84,8 @@ TELEGRAM_GROUP_ID = safe_int(os.getenv('TELEGRAM_GROUP_ID', '0'), 0)
 # ============================================================================
 # TIMEFRAMES
 # ============================================================================
-TIMEFRAME_SHORT = "60"  # 1H (для entry timing)
-TIMEFRAME_LONG = "240"  # 4H (для major trend)
+TIMEFRAME_SHORT = "60"  # 1H
+TIMEFRAME_LONG = "240"  # 4H
 
 TIMEFRAME_SHORT_NAME = "1H"
 TIMEFRAME_LONG_NAME = "4H"
@@ -79,106 +93,91 @@ TIMEFRAME_LONG_NAME = "4H"
 # ============================================================================
 # STAGE 1: TRIPLE EMA PARAMETERS (9/21/50)
 # ============================================================================
+EMA_FAST = 9
+EMA_MEDIUM = 21
+EMA_SLOW = 50
 
-# EMA periods
-EMA_FAST = 9  # Быстрая EMA (краткосрочный momentum)
-EMA_MEDIUM = 21  # Средняя EMA (среднесрочный тренд, pullback target)
-EMA_SLOW = 50  # Медленная EMA (основной тренд, macro direction)
+EMA_MIN_GAP_PCT = 0.5
+EMA_CROSSOVER_LOOKBACK = 5
 
-# Минимальный зазор между EMA для "perfect alignment" (в процентах)
-EMA_MIN_GAP_PCT = 0.5  # 0.5% минимум между EMA для чистого тренда
+PULLBACK_TOUCH_PCT = 1.5
+PULLBACK_BOUNCE_VOLUME = 1.2
 
-# Lookback для поиска crossovers (пересечений)
-EMA_CROSSOVER_LOOKBACK = 5  # Ищем crossover в последних 5 свечах
+COMPRESSION_MAX_SPREAD_PCT = 1.0
+COMPRESSION_BREAKOUT_VOLUME = 2.0
 
-# Pullback параметры
-PULLBACK_TOUCH_PCT = 1.5  # ±1.5% от EMA21 для "касания"
-PULLBACK_BOUNCE_VOLUME = 1.2  # Минимум volume ratio для pullback bounce
-
-# Compression (сжатие) параметры
-COMPRESSION_MAX_SPREAD_PCT = 1.0  # <1% между EMA9 и EMA50 = compressed
-COMPRESSION_BREAKOUT_VOLUME = 2.0  # Volume spike при пробое из compression
-
-# Volume confirmation
-MIN_VOLUME_RATIO = 1.0  # Минимум volume ratio для Stage 1 base signal
-
-# Confidence threshold
-MIN_CONFIDENCE = 60  # Минимальная уверенность для прохождения Stage 1
+MIN_VOLUME_RATIO = 1.0
+MIN_CONFIDENCE = 60
 
 # ============================================================================
-# ДОПОЛНИТЕЛЬНЫЕ ИНДИКАТОРЫ (для AI анализа в Stage 2/3)
+# ДОПОЛНИТЕЛЬНЫЕ ИНДИКАТОРЫ
 # ============================================================================
-
-# RSI
 RSI_PERIOD = 14
-RSI_MIN_LONG = 50  # Минимум для LONG (используется только AI)
-RSI_MAX_LONG = 75  # Максимум для LONG
-RSI_MIN_SHORT = 25  # Минимум для SHORT
-RSI_MAX_SHORT = 50  # Максимум для SHORT
+RSI_MIN_LONG = 50
+RSI_MAX_LONG = 75
+RSI_MIN_SHORT = 25
+RSI_MAX_SHORT = 50
 
-# Volume window
-VOLUME_WINDOW = 20  # Окно для расчёта среднего объёма
+VOLUME_WINDOW = 20
 
-# MACD (используется только в AI анализе)
 MACD_FAST = 12
 MACD_SLOW = 26
 MACD_SIGNAL = 9
 
-# ATR (для stop-loss calculation)
 ATR_PERIOD = 14
 
 # ============================================================================
-# STAGE 1: SCANNING PARAMETERS
+# SCANNING PARAMETERS
 # ============================================================================
-QUICK_SCAN_CANDLES = 100  # Достаточно для EMA50 + история
+QUICK_SCAN_CANDLES = 100
 
 # ============================================================================
-# STAGE 2: AI PAIR SELECTION (Compact Data)
+# STAGE 2: AI PAIR SELECTION
 # ============================================================================
 STAGE2_PROVIDER = os.getenv('STAGE2_PROVIDER', 'deepseek')
 STAGE2_MODEL = os.getenv('STAGE2_MODEL', 'deepseek-chat')
 STAGE2_TEMPERATURE = safe_float(os.getenv('STAGE2_TEMPERATURE', '0.3'), 0.3)
 STAGE2_MAX_TOKENS = safe_int(os.getenv('STAGE2_MAX_TOKENS', '2000'), 2000)
 
-STAGE2_CANDLES_1H = 60  # Compact data для Stage 2
+STAGE2_CANDLES_1H = 60
 STAGE2_CANDLES_4H = 60
 
 # ============================================================================
-# STAGE 3: AI COMPREHENSIVE ANALYSIS (Full Data)
+# STAGE 3: AI COMPREHENSIVE ANALYSIS
 # ============================================================================
 STAGE3_PROVIDER = os.getenv('STAGE3_PROVIDER', 'deepseek')
 STAGE3_MODEL = os.getenv('STAGE3_MODEL', 'deepseek-chat')
 STAGE3_TEMPERATURE = safe_float(os.getenv('STAGE3_TEMPERATURE', '0.7'), 0.7)
 STAGE3_MAX_TOKENS = safe_int(os.getenv('STAGE3_MAX_TOKENS', '5000'), 5000)
 
-STAGE3_CANDLES_1H = 100  # Full data для Stage 3
+STAGE3_CANDLES_1H = 100
 STAGE3_CANDLES_4H = 60
 
-AI_INDICATORS_HISTORY = 30  # История индикаторов для compact data
-FINAL_INDICATORS_HISTORY = 30  # История индикаторов для full data
+AI_INDICATORS_HISTORY = 30
+FINAL_INDICATORS_HISTORY = 30
 
 # ============================================================================
 # PAIR SELECTION
 # ============================================================================
-MAX_FINAL_PAIRS = 3  # 3-5 пар для глубокого анализа
+MAX_FINAL_PAIRS = 3
 
 # ============================================================================
 # TRADING PARAMETERS
 # ============================================================================
-MIN_RISK_REWARD_RATIO = 1.5  # Минимум R/R для swing trading
+MIN_RISK_REWARD_RATIO = 1.5
 
 # ============================================================================
 # MARKET DATA THRESHOLDS
 # ============================================================================
-OI_CHANGE_GROWING_THRESHOLD = 2.0  # OI рост >2% = GROWING
-OI_CHANGE_DECLINING_THRESHOLD = -2.0  # OI падение <-2% = DECLINING
+OI_CHANGE_GROWING_THRESHOLD = 2.0
+OI_CHANGE_DECLINING_THRESHOLD = -2.0
 
 # ============================================================================
 # API SETTINGS
 # ============================================================================
-API_TIMEOUT = 30  # Общий timeout для API запросов
-API_TIMEOUT_ANALYSIS = 120  # Увеличенный timeout для Stage 3
-MAX_CONCURRENT = 50  # Максимум одновременных запросов
+API_TIMEOUT = 30
+API_TIMEOUT_ANALYSIS = 120
+MAX_CONCURRENT = 50
 
 # ============================================================================
 # DEEPSEEK CONFIGURATION
@@ -200,7 +199,7 @@ SELECTION_PROMPT = 'ai/prompts/prompt_select.txt'
 ANALYSIS_PROMPT = 'ai/prompts/prompt_analyze.txt'
 
 # ============================================================================
-# AI TEMPERATURE & TOKENS (legacy, используются как fallback)
+# AI LEGACY
 # ============================================================================
 AI_TEMPERATURE_SELECT = safe_float(os.getenv('AI_TEMPERATURE_SELECT', '0.3'), 0.3)
 AI_TEMPERATURE_ANALYZE = safe_float(os.getenv('AI_TEMPERATURE_ANALYZE', '0.7'), 0.7)
@@ -214,10 +213,16 @@ CLAUDE_RATE_LIMIT_DELAY = safe_int(os.getenv('CLAUDE_RATE_LIMIT_DELAY', '0'), 0)
 
 
 # ============================================================================
-# CONFIG CLASS (для удобного импорта)
+# CONFIG CLASS
 # ============================================================================
 class Config:
     """Централизованный класс конфигурации"""
+
+    # Directories (✅ НОВОЕ)
+    PROJECT_ROOT = PROJECT_ROOT
+    LOGS_DIR = LOGS_DIR
+    SIGNALS_DIR = SIGNALS_DIR
+    BACKTEST_DIR = BACKTEST_DIR
 
     # API Keys
     DEEPSEEK_API_KEY = DEEPSEEK_API_KEY
@@ -321,7 +326,7 @@ config = Config()
 
 
 # ============================================================================
-# VALIDATION (проверка критичных параметров)
+# VALIDATION
 # ============================================================================
 def validate_config():
     """Проверка обязательных параметров"""

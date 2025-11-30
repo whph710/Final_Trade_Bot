@@ -2,7 +2,9 @@
 Logging Configuration
 Файл: utils/logger.py
 
-Настройка системы логирования для всех модулей
+ОБНОВЛЕНО:
+- Логи сохраняются в logs/
+- Красный цвет для консоли (как было)
 """
 
 import logging
@@ -27,7 +29,7 @@ class ColoredFormatter(logging.Formatter):
 
 def setup_logger(
         module_name: str,
-        log_dir: str = "bot_logs",
+        log_dir: Path = None,
         console_level: int = logging.INFO,
         file_level: int = logging.DEBUG
 ) -> logging.Logger:
@@ -36,9 +38,9 @@ def setup_logger(
 
     Args:
         module_name: __name__ модуля
-        log_dir: Директория для файлов логов
-        console_level: Уровень для консоли (default: INFO)
-        file_level: Уровень для файла (default: DEBUG)
+        log_dir: Path к директории логов (по умолчанию config.LOGS_DIR)
+        console_level: Уровень для консоли
+        file_level: Уровень для файла
 
     Returns:
         Настроенный logger
@@ -51,9 +53,15 @@ def setup_logger(
 
     logger.setLevel(logging.DEBUG)
 
-    # Создать директорию логов
-    log_path = Path(log_dir)
-    log_path.mkdir(exist_ok=True)
+    # Используем logs/ из config
+    if log_dir is None:
+        try:
+            from config import config
+            log_dir = config.LOGS_DIR
+        except:
+            log_dir = Path("logs")
+
+    log_dir.mkdir(exist_ok=True)
 
     # Формат логов
     file_formatter = logging.Formatter(
@@ -69,7 +77,7 @@ def setup_logger(
     # FILE: Все логи
     today = datetime.now().strftime('%Y%m%d')
     file_handler = logging.FileHandler(
-        log_path / f"bot_{today}.log",
+        log_dir / f"bot_{today}.log",
         encoding='utf-8'
     )
     file_handler.setLevel(file_level)
@@ -78,7 +86,7 @@ def setup_logger(
 
     # FILE: Только ошибки
     error_handler = logging.FileHandler(
-        log_path / f"bot_errors_{today}.log",
+        log_dir / f"bot_errors_{today}.log",
         encoding='utf-8'
     )
     error_handler.setLevel(logging.ERROR)

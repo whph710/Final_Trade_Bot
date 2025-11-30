@@ -60,18 +60,15 @@ htmlcov/
 *.code-workspace
 
 # ============================================================================
-# LOGS & DATA
+# LOGS & DATA (✅ UPDATED)
 # ============================================================================
-*.log
-bot_logs/
+# Логи (все в logs/)
 logs/
+*.log
 
-# Bot data & results
-bot_data/
-bot_results/
-backtest_results/
-bot_result_*.json
-bot_statistics.json
+# Сигналы (все в signals/)
+signals/
+*.json
 
 # ============================================================================
 # OS
@@ -95,9 +92,9 @@ Desktop.ini
 *~
 
 # ============================================================================
-# PROJECT SPECIFIC (если будут появляться)
+# PROJECT SPECIFIC
 # ============================================================================
-# Compressed data (если используем)
+# Compressed data
 *.gz
 
 # Cache files

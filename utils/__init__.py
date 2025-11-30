@@ -2,7 +2,8 @@
 Utils Package
 Файл: utils/__init__.py
 
-Вспомогательные утилиты (логирование, валидация)
+ОБНОВЛЕНО:
+- Добавлены signal_storage и backtesting
 """
 
 from .logger import setup_logger, get_logger
@@ -13,6 +14,8 @@ from .validators import (
     validate_rr_ratio,
     validate_prices_in_range
 )
+from .signal_storage import SignalStorage, get_signal_storage
+from .backtesting import Backtester, get_backtester, format_backtest_report
 
 __all__ = [
     # Logger
@@ -25,4 +28,13 @@ __all__ = [
     'safe_int',
     'validate_rr_ratio',
     'validate_prices_in_range',
+
+    # Signal Storage
+    'SignalStorage',
+    'get_signal_storage',
+
+    # Backtesting
+    'Backtester',
+    'get_backtester',
+    'format_backtest_report',
 ]
