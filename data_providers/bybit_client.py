@@ -3,6 +3,8 @@ Bybit API Client
 Файл: data_providers/bybit_client.py
 
 Оптимизированный async клиент для работы с Bybit API
+
+ОБНОВЛЕНО: Поддержка поля 'timeframe' в batch requests для Stage 2
 """
 
 import aiohttp
@@ -141,16 +143,18 @@ async def fetch_multiple_candles(
     Args:
         requests: Список запросов вида:
             [
-                {'symbol': 'BTCUSDT', 'interval': '60', 'limit': 100},
-                {'symbol': 'ETHUSDT', 'interval': '240', 'limit': 60},
+                {'symbol': 'BTCUSDT', 'interval': '60', 'limit': 100, 'timeframe': '1H'},
+                {'symbol': 'ETHUSDT', 'interval': '240', 'limit': 60, 'timeframe': '4H'},
                 ...
             ]
+
+            ✅ ОБНОВЛЕНО: Поле 'timeframe' опционально (для Stage 2)
 
     Returns:
         Список результатов вида:
             [
-                {'symbol': 'BTCUSDT', 'klines': [...], 'success': True},
-                {'symbol': 'ETHUSDT', 'klines': [], 'success': False},
+                {'symbol': 'BTCUSDT', 'klines': [...], 'success': True, 'timeframe': '1H'},
+                {'symbol': 'ETHUSDT', 'klines': [], 'success': False, 'timeframe': '4H'},
                 ...
             ]
     """
@@ -180,10 +184,10 @@ async def _fetch_single_request(req: Dict) -> Dict:
     Обработка одного запроса с обработкой ошибок
 
     Args:
-        req: {'symbol': str, 'interval': str, 'limit': int}
+        req: {'symbol': str, 'interval': str, 'limit': int, 'timeframe': str (optional)}
 
     Returns:
-        {'symbol': str, 'klines': List, 'success': bool}
+        {'symbol': str, 'klines': List, 'success': bool, 'timeframe': str (optional)}
     """
     try:
         klines = await fetch_candles(
@@ -192,19 +196,31 @@ async def _fetch_single_request(req: Dict) -> Dict:
             req.get('limit', 100)
         )
 
-        return {
+        result = {
             'symbol': req['symbol'],
             'klines': klines,
             'success': len(klines) > 0
         }
 
+        # ✅ ДОБАВЛЕНО: Пробрасываем timeframe если есть
+        if 'timeframe' in req:
+            result['timeframe'] = req['timeframe']
+
+        return result
+
     except Exception as e:
         logger.debug(f"Error in single request {req['symbol']}: {e}")
-        return {
+
+        result = {
             'symbol': req['symbol'],
             'klines': [],
             'success': False
         }
+
+        if 'timeframe' in req:
+            result['timeframe'] = req['timeframe']
+
+        return result
 
 
 async def get_all_trading_pairs() -> List[str]:

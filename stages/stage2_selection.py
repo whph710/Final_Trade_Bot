@@ -1,12 +1,14 @@
 """
-Stage 2: AI Pair Selection - WITH MACD
+Stage 2: AI Pair Selection - PARALLEL LOADING
 Файл: stages/stage2_selection.py
 
-ИЗМЕНЕНИЯ:
-- Добавлен MACD в compact indicators
+ОПТИМИЗАЦИЯ:
+- Параллельная загрузка свечей для всех кандидатов (как в Stage 1)
+- Уменьшение времени с ~67s до ~10-15s для 85 пар
 """
 
 import logging
+import asyncio
 import numpy as np
 from typing import List, Dict
 
@@ -27,9 +29,10 @@ async def run_stage2(
     Returns:
         Список выбранных символов (например ['BTCUSDT', 'ETHUSDT'])
     """
-    from data_providers import fetch_candles, normalize_candles
+    from data_providers import fetch_multiple_candles, normalize_candles
     from ai.ai_router import AIRouter
     from config import config
+    import time
 
     if not candidates:
         logger.warning("Stage 2: No candidates provided")
@@ -40,7 +43,49 @@ async def run_stage2(
         f"(max: {max_pairs})"
     )
 
-    # Подготовка compact данных для AI
+    start_time = time.time()
+
+    # ===================================================================
+    # ПАРАЛЛЕЛЬНАЯ ЗАГРУЗКА ВСЕХ СВЕЧЕЙ (как в Stage 1)
+    # ===================================================================
+    logger.info(f"Stage 2: Batch loading candles for {len(candidates)} pairs...")
+
+    # Формируем batch requests
+    requests = []
+    for candidate in candidates:
+        symbol = candidate.symbol
+
+        # 1H candles
+        requests.append({
+            'symbol': symbol,
+            'interval': config.TIMEFRAME_SHORT,
+            'limit': config.STAGE2_CANDLES_1H,
+            'timeframe': '1H'
+        })
+
+        # 4H candles
+        requests.append({
+            'symbol': symbol,
+            'interval': config.TIMEFRAME_LONG,
+            'limit': config.STAGE2_CANDLES_4H,
+            'timeframe': '4H'
+        })
+
+    # Batch загрузка
+    batch_results = await fetch_multiple_candles(requests)
+
+    load_time = time.time() - start_time
+    logger.info(
+        f"Stage 2: Loaded {len(batch_results)}/{len(requests)} requests "
+        f"in {load_time:.1f}s"
+    )
+
+    # Группируем результаты по символам
+    candles_by_symbol = _group_candles_by_symbol(batch_results)
+
+    # ===================================================================
+    # ОБРАБОТКА КАЖДОЙ ПАРЫ
+    # ===================================================================
     ai_input_data = []
     failed_symbols = []
 
@@ -50,35 +95,18 @@ async def run_stage2(
         try:
             logger.debug(f"Stage 2: [{idx}/{len(candidates)}] Processing {symbol}...")
 
-            # Загрузка 1H и 4H свечей
-            logger.debug(f"Stage 2: {symbol} fetching candles...")
+            # Получаем свечи из предзагруженных данных
+            symbol_data = candles_by_symbol.get(symbol, {})
 
-            candles_1h_raw = await fetch_candles(
-                symbol,
-                config.TIMEFRAME_SHORT,
-                config.STAGE2_CANDLES_1H
-            )
-
-            candles_4h_raw = await fetch_candles(
-                symbol,
-                config.TIMEFRAME_LONG,
-                config.STAGE2_CANDLES_4H
-            )
-
-            logger.debug(
-                f"Stage 2: {symbol} loaded - "
-                f"1H: {len(candles_1h_raw) if candles_1h_raw else 0} candles, "
-                f"4H: {len(candles_4h_raw) if candles_4h_raw else 0} candles"
-            )
+            candles_1h_raw = symbol_data.get('1H')
+            candles_4h_raw = symbol_data.get('4H')
 
             if not candles_1h_raw or not candles_4h_raw:
-                logger.debug(f"Stage 2: {symbol} SKIP - Missing raw candles")
-                failed_symbols.append((symbol, "Missing raw candles"))
+                logger.debug(f"Stage 2: {symbol} SKIP - Missing candles in batch")
+                failed_symbols.append((symbol, "Missing candles in batch"))
                 continue
 
             # Нормализация
-            logger.debug(f"Stage 2: {symbol} normalizing candles...")
-
             candles_1h = normalize_candles(
                 candles_1h_raw,
                 symbol=symbol,
@@ -151,15 +179,18 @@ async def run_stage2(
             logger.info(f"Stage 2: ✓ {symbol} prepared successfully")
 
         except Exception as e:
-            logger.error(f"Stage 2: {symbol} ERROR - {e}", exc_info=True)
+            logger.error(f"Stage 2: {symbol} ERROR - {e}", exc_info=False)
             failed_symbols.append((symbol, f"Exception: {str(e)[:50]}"))
             continue
+
+    prep_time = time.time() - start_time
 
     # Логирование результатов подготовки
     logger.info("=" * 70)
     logger.info(f"Stage 2: Data preparation complete")
     logger.info(f"  • Successfully prepared: {len(ai_input_data)}/{len(candidates)}")
     logger.info(f"  • Failed: {len(failed_symbols)}/{len(candidates)}")
+    logger.info(f"  • Preparation time: {prep_time:.1f}s")
 
     if failed_symbols and len(failed_symbols) <= 10:
         logger.info(f"\nFailed symbols:")
@@ -190,7 +221,12 @@ async def run_stage2(
         max_pairs=max_pairs
     )
 
-    logger.info(f"Stage 2 complete: AI selected {len(selected_pairs)} pairs")
+    total_time = time.time() - start_time
+
+    logger.info(
+        f"Stage 2 complete: AI selected {len(selected_pairs)} pairs "
+        f"(total time: {total_time:.1f}s)"
+    )
 
     if selected_pairs:
         logger.info(f"Selected: {selected_pairs}")
@@ -200,11 +236,43 @@ async def run_stage2(
     return selected_pairs
 
 
+def _group_candles_by_symbol(batch_results: List[Dict]) -> Dict[str, Dict]:
+    """
+    Группировать результаты batch загрузки по символам
+
+    Args:
+        batch_results: Список результатов от fetch_multiple_candles
+
+    Returns:
+        {
+            'BTCUSDT': {
+                '1H': [[candles]],
+                '4H': [[candles]]
+            },
+            ...
+        }
+    """
+    grouped = {}
+
+    for result in batch_results:
+        if not result.get('success'):
+            continue
+
+        symbol = result['symbol']
+        klines = result.get('klines', [])
+        timeframe = result.get('timeframe', 'UNKNOWN')
+
+        if symbol not in grouped:
+            grouped[symbol] = {}
+
+        grouped[symbol][timeframe] = klines
+
+    return grouped
+
+
 def _calculate_compact_indicators(candles, symbol: str = "UNKNOWN", tf: str = "UNKNOWN") -> Dict:
     """
     Рассчитать compact indicators для Stage 2
-
-    ✅ ДОБАВЛЕНО: MACD в compact indicators
 
     Args:
         candles: NormalizedCandles объект
@@ -229,7 +297,7 @@ def _calculate_compact_indicators(candles, symbol: str = "UNKNOWN", tf: str = "U
 
         from indicators.ema import calculate_ema
         from indicators.rsi import calculate_rsi
-        from indicators.macd import calculate_macd  # ✅ ДОБАВЛЕНО
+        from indicators.macd import calculate_macd
         from indicators.volume import calculate_volume_ratio
         from config import config
 
@@ -242,7 +310,7 @@ def _calculate_compact_indicators(candles, symbol: str = "UNKNOWN", tf: str = "U
         rsi = calculate_rsi(candles.closes, config.RSI_PERIOD)
         volume_ratios = calculate_volume_ratio(candles.volumes, config.VOLUME_WINDOW)
 
-        # ✅ ДОБАВЛЕНО: MACD
+        # MACD
         macd_data = calculate_macd(
             candles.closes,
             config.MACD_FAST,
@@ -257,8 +325,6 @@ def _calculate_compact_indicators(candles, symbol: str = "UNKNOWN", tf: str = "U
         current_ema50 = float(ema50[-1])
         current_rsi = float(rsi[-1])
         current_volume_ratio = float(volume_ratios[-1])
-
-        # ✅ ДОБАВЛЕНО: Current MACD values
         current_macd_line = float(macd_data.line[-1])
         current_macd_histogram = float(macd_data.histogram[-1])
 
@@ -266,7 +332,7 @@ def _calculate_compact_indicators(candles, symbol: str = "UNKNOWN", tf: str = "U
         if any(np.isnan(v) or np.isinf(v) for v in [
             current_price, current_ema9, current_ema21,
             current_ema50, current_rsi, current_volume_ratio,
-            current_macd_line, current_macd_histogram  # ✅ ДОБАВЛЕНО
+            current_macd_line, current_macd_histogram
         ]):
             logger.warning(f"Stage 2: {symbol} {tf} - NaN/Inf detected in current values")
             return None
@@ -280,23 +346,22 @@ def _calculate_compact_indicators(candles, symbol: str = "UNKNOWN", tf: str = "U
                 'ema50': current_ema50,
                 'rsi': current_rsi,
                 'volume_ratio': current_volume_ratio,
-                'macd_line': current_macd_line,        # ✅ ДОБАВЛЕНО
-                'macd_histogram': current_macd_histogram  # ✅ ДОБАВЛЕНО
+                'macd_line': current_macd_line,
+                'macd_histogram': current_macd_histogram
             },
             'ema9': [float(x) for x in ema9[-30:]],
             'ema21': [float(x) for x in ema21[-30:]],
             'ema50': [float(x) for x in ema50[-30:]],
             'rsi': [float(x) for x in rsi[-30:]],
             'volume_ratio': [float(x) for x in volume_ratios[-30:]],
-            'macd_line': [float(x) for x in macd_data.line[-30:]],          # ✅ ДОБАВЛЕНО
-            'macd_histogram': [float(x) for x in macd_data.histogram[-30:]]  # ✅ ДОБАВЛЕНО
+            'macd_line': [float(x) for x in macd_data.line[-30:]],
+            'macd_histogram': [float(x) for x in macd_data.histogram[-30:]]
         }
 
         if not result.get('current'):
             logger.warning(f"Stage 2: {symbol} {tf} - Failed to build 'current' dict")
             return None
 
-        # ✅ ОБНОВЛЕНО: Добавлены macd_line и macd_histogram
         required_keys = ['price', 'ema9', 'ema21', 'ema50', 'rsi', 'volume_ratio', 'macd_line', 'macd_histogram']
         if not all(k in result['current'] for k in required_keys):
             logger.warning(f"Stage 2: {symbol} {tf} - Missing keys in 'current' dict")
@@ -306,7 +371,7 @@ def _calculate_compact_indicators(candles, symbol: str = "UNKNOWN", tf: str = "U
         return result
 
     except Exception as e:
-        logger.error(f"Stage 2: {symbol} {tf} - Indicators calculation error: {e}", exc_info=True)
+        logger.error(f"Stage 2: {symbol} {tf} - Indicators calculation error: {e}", exc_info=False)
         return None
 
 

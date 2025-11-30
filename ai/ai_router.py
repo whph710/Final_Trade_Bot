@@ -3,10 +3,15 @@ AI Router
 Файл: ai/ai_router.py
 
 Роутер для работы с разными AI провайдерами (DeepSeek, Claude)
+
+ИСПРАВЛЕНО:
+- Добавлен _serialize_to_json() для корректной сериализации dataclass объектов
+- Улучшена обработка take_profit_levels (защита от None)
 """
 
 import logging
 from typing import List, Dict, Optional
+from dataclasses import is_dataclass, asdict
 
 logger = logging.getLogger(__name__)
 
@@ -313,7 +318,7 @@ class AIRouter:
             # Загружаем промпт
             system_prompt = load_prompt_cached("prompt_analyze.txt")
 
-            # Формируем данные для анализа
+            # Сериализуем данные с конвертацией dataclass → dict
             analysis_data = {
                 'symbol': symbol,
                 'candles_1h': comprehensive_data.get('candles_1h', [])[-100:],
@@ -322,9 +327,9 @@ class AIRouter:
                 'indicators_4h': comprehensive_data.get('indicators_4h', {}),
                 'current_price': comprehensive_data.get('current_price', 0),
                 'market_data': comprehensive_data.get('market_data', {}),
-                'correlation_data': comprehensive_data.get('correlation_data', {}),
-                'volume_profile': comprehensive_data.get('volume_profile', {}),
-                'vp_analysis': comprehensive_data.get('vp_analysis', {}),
+                'correlation_data': self._serialize_to_json(comprehensive_data.get('correlation_data', {})),
+                'volume_profile': self._serialize_to_json(comprehensive_data.get('volume_profile')),
+                'vp_analysis': self._serialize_to_json(comprehensive_data.get('vp_analysis')),
                 'btc_candles_1h': comprehensive_data.get('btc_candles_1h', [])[-100:],
                 'btc_candles_4h': comprehensive_data.get('btc_candles_4h', [])[-60:]
             }
@@ -365,20 +370,8 @@ class AIRouter:
 
             result['symbol'] = symbol
 
-            # Нормализация take_profit_levels
-            if 'take_profit_levels' in result:
-                tp_levels = result['take_profit_levels']
-                if not isinstance(tp_levels, list):
-                    tp_levels = [
-                        float(tp_levels),
-                        float(tp_levels) * 1.1,
-                        float(tp_levels) * 1.2
-                    ]
-                elif len(tp_levels) < 3:
-                    while len(tp_levels) < 3:
-                        last_tp = tp_levels[-1] if tp_levels else 0
-                        tp_levels.append(last_tp * 1.1)
-                result['take_profit_levels'] = tp_levels
+            # ✅ УЛУЧШЕННАЯ нормализация take_profit_levels
+            result = self._normalize_take_profit_levels(result, symbol)
 
             return result
 
@@ -392,6 +385,148 @@ class AIRouter:
                 'confidence': 0,
                 'rejection_reason': f'DeepSeek exception: {str(e)[:100]}'
             }
+
+    def _normalize_take_profit_levels(self, result: Dict, symbol: str) -> Dict:
+        """
+        ✅ НОВАЯ ФУНКЦИЯ: Нормализация take_profit_levels с защитой от None и неправильных типов
+
+        Args:
+            result: Результат от AI
+            symbol: Символ (для логирования)
+
+        Returns:
+            result с нормализованным take_profit_levels
+        """
+        try:
+            tp_levels = result.get('take_profit_levels')
+            entry_price = result.get('entry_price', 0)
+
+            # Случай 1: None или отсутствует
+            if tp_levels is None:
+                logger.warning(f"{symbol}: take_profit_levels is None, generating defaults")
+                if entry_price > 0:
+                    result['take_profit_levels'] = [
+                        entry_price * 1.02,  # TP1 = +2%
+                        entry_price * 1.04,  # TP2 = +4%
+                        entry_price * 1.06   # TP3 = +6%
+                    ]
+                else:
+                    result['take_profit_levels'] = [0, 0, 0]
+                return result
+
+            # Случай 2: Не список (может быть число, строка и т.д.)
+            if not isinstance(tp_levels, list):
+                logger.warning(f"{symbol}: take_profit_levels is not list ({type(tp_levels)}), converting")
+                try:
+                    # Пытаемся конвертировать в float
+                    single_tp = float(tp_levels)
+                    result['take_profit_levels'] = [
+                        single_tp,
+                        single_tp * 1.1,
+                        single_tp * 1.2
+                    ]
+                except (ValueError, TypeError):
+                    # Не удалось конвертировать - генерируем дефолты
+                    logger.warning(f"{symbol}: Could not convert tp_levels to float, using defaults")
+                    if entry_price > 0:
+                        result['take_profit_levels'] = [
+                            entry_price * 1.02,
+                            entry_price * 1.04,
+                            entry_price * 1.06
+                        ]
+                    else:
+                        result['take_profit_levels'] = [0, 0, 0]
+                return result
+
+            # Случай 3: Список, но меньше 3 элементов
+            if len(tp_levels) < 3:
+                logger.debug(f"{symbol}: take_profit_levels has {len(tp_levels)} elements, extending to 3")
+
+                # Фильтруем None и конвертируем в float
+                valid_tps = []
+                for tp in tp_levels:
+                    if tp is not None:
+                        try:
+                            valid_tps.append(float(tp))
+                        except (ValueError, TypeError):
+                            pass
+
+                # Если есть хоть один валидный TP - используем его
+                if valid_tps:
+                    while len(valid_tps) < 3:
+                        last_tp = valid_tps[-1]
+                        valid_tps.append(last_tp * 1.1)
+                    result['take_profit_levels'] = valid_tps
+                else:
+                    # Нет валидных TP - генерируем дефолты
+                    if entry_price > 0:
+                        result['take_profit_levels'] = [
+                            entry_price * 1.02,
+                            entry_price * 1.04,
+                            entry_price * 1.06
+                        ]
+                    else:
+                        result['take_profit_levels'] = [0, 0, 0]
+                return result
+
+            # Случай 4: Список из 3+ элементов - проверяем на None
+            cleaned_tps = []
+            for tp in tp_levels[:3]:  # Берём первые 3
+                if tp is None:
+                    logger.warning(f"{symbol}: Found None in take_profit_levels")
+                    # Если есть предыдущий TP - используем его * 1.1, иначе используем entry_price
+                    if cleaned_tps:
+                        cleaned_tps.append(cleaned_tps[-1] * 1.1)
+                    elif entry_price > 0:
+                        cleaned_tps.append(entry_price * 1.02)
+                    else:
+                        cleaned_tps.append(0)
+                else:
+                    try:
+                        cleaned_tps.append(float(tp))
+                    except (ValueError, TypeError):
+                        logger.warning(f"{symbol}: Could not convert TP to float: {tp}")
+                        if cleaned_tps:
+                            cleaned_tps.append(cleaned_tps[-1] * 1.1)
+                        else:
+                            cleaned_tps.append(0)
+
+            result['take_profit_levels'] = cleaned_tps
+            return result
+
+        except Exception as e:
+            logger.error(f"{symbol}: Error normalizing take_profit_levels: {e}")
+            # В случае любой ошибки - возвращаем безопасные дефолты
+            result['take_profit_levels'] = [0, 0, 0]
+            return result
+
+    def _serialize_to_json(self, obj):
+        """
+        Рекурсивно конвертирует dataclass объекты в dict для JSON сериализации
+
+        Args:
+            obj: Любой объект (может быть dataclass, dict, list, примитив)
+
+        Returns:
+            JSON-сериализуемый объект
+        """
+        if obj is None:
+            return None
+
+        # Если это dataclass - конвертируем в dict
+        if is_dataclass(obj):
+            return asdict(obj)
+
+        # Если это dict - рекурсивно обрабатываем значения
+        if isinstance(obj, dict):
+            return {k: self._serialize_to_json(v) for k, v in obj.items()}
+
+        # Если это list/tuple - рекурсивно обрабатываем элементы
+        if isinstance(obj, (list, tuple)):
+            return [self._serialize_to_json(item) for item in obj]
+
+        # Примитивы (str, int, float, bool) возвращаем как есть
+        return obj
 
     def _extract_json_from_response(self, text: str) -> Optional[Dict]:
         """Извлечь JSON из ответа (используем метод из AnthropicClient)"""
