@@ -1,12 +1,9 @@
 """
-Stage 2: AI Pair Selection - FIXED
+Stage 2: AI Pair Selection - WITH MACD
 Файл: stages/stage2_selection.py
 
-ИСПРАВЛЕНИЯ:
-- Добавлено детальное логирование каждого этапа
-- Исправлена проверка на None в normalize_candles
-- Улучшена обработка ошибок
-- КРИТИЧНО: Исправлены импорты indicators
+ИЗМЕНЕНИЯ:
+- Добавлен MACD в compact indicators
 """
 
 import logging
@@ -68,7 +65,6 @@ async def run_stage2(
                 config.STAGE2_CANDLES_4H
             )
 
-            # ИСПРАВЛЕНО: Детальное логирование
             logger.debug(
                 f"Stage 2: {symbol} loaded - "
                 f"1H: {len(candles_1h_raw) if candles_1h_raw else 0} candles, "
@@ -95,7 +91,6 @@ async def run_stage2(
                 interval=config.TIMEFRAME_LONG
             )
 
-            # ✅ КРИТИЧНО: Проверка на None (не на truthy/falsy!)
             if candles_1h is None:
                 logger.warning(f"Stage 2: {symbol} SKIP - 1H normalization returned None")
                 failed_symbols.append((symbol, "1H normalization failed"))
@@ -106,7 +101,6 @@ async def run_stage2(
                 failed_symbols.append((symbol, "4H normalization failed"))
                 continue
 
-            # Проверка валидности
             if not candles_1h.is_valid:
                 logger.warning(f"Stage 2: {symbol} SKIP - 1H candles invalid")
                 failed_symbols.append((symbol, "1H candles invalid"))
@@ -123,7 +117,6 @@ async def run_stage2(
             indicators_1h = _calculate_compact_indicators(candles_1h, symbol, "1H")
             indicators_4h = _calculate_compact_indicators(candles_4h, symbol, "4H")
 
-            # ✅ КРИТИЧНО: Проверка на None + наличие 'current'
             if indicators_1h is None:
                 logger.warning(f"Stage 2: {symbol} SKIP - 1H indicators calculation returned None")
                 failed_symbols.append((symbol, "1H indicators failed"))
@@ -182,10 +175,6 @@ async def run_stage2(
 
     if not ai_input_data:
         logger.error("Stage 2: No valid AI input data prepared - CRITICAL FAILURE")
-        logger.error("All candidates failed validation. Check:")
-        logger.error("  1. Bybit API connectivity")
-        logger.error("  2. Candle data validity")
-        logger.error("  3. Indicator calculation parameters")
         return []
 
     logger.info(
@@ -215,7 +204,7 @@ def _calculate_compact_indicators(candles, symbol: str = "UNKNOWN", tf: str = "U
     """
     Рассчитать compact indicators для Stage 2
 
-    ✅ ИСПРАВЛЕНО: Правильные импорты из indicators package
+    ✅ ДОБАВЛЕНО: MACD в compact indicators
 
     Args:
         candles: NormalizedCandles объект
@@ -226,7 +215,6 @@ def _calculate_compact_indicators(candles, symbol: str = "UNKNOWN", tf: str = "U
         Dict с indicators ИЛИ None при ошибке
     """
     try:
-        # ✅ КРИТИЧНО: Проверка на None ПЕРВОЙ
         if candles is None:
             logger.warning(f"Stage 2: {symbol} {tf} - candles is None")
             return None
@@ -235,14 +223,13 @@ def _calculate_compact_indicators(candles, symbol: str = "UNKNOWN", tf: str = "U
             logger.warning(f"Stage 2: {symbol} {tf} - candles.is_valid = False")
             return None
 
-        # Проверка минимальной длины
         if len(candles.closes) < 50:
             logger.warning(f"Stage 2: {symbol} {tf} - insufficient candles ({len(candles.closes)} < 50)")
             return None
 
-        # ✅ ИМПОРТЫ ИЗ НОВОГО indicators PACKAGE
         from indicators.ema import calculate_ema
         from indicators.rsi import calculate_rsi
+        from indicators.macd import calculate_macd  # ✅ ДОБАВЛЕНО
         from indicators.volume import calculate_volume_ratio
         from config import config
 
@@ -255,6 +242,14 @@ def _calculate_compact_indicators(candles, symbol: str = "UNKNOWN", tf: str = "U
         rsi = calculate_rsi(candles.closes, config.RSI_PERIOD)
         volume_ratios = calculate_volume_ratio(candles.volumes, config.VOLUME_WINDOW)
 
+        # ✅ ДОБАВЛЕНО: MACD
+        macd_data = calculate_macd(
+            candles.closes,
+            config.MACD_FAST,
+            config.MACD_SLOW,
+            config.MACD_SIGNAL
+        )
+
         # Извлекаем текущие значения
         current_price = float(candles.closes[-1])
         current_ema9 = float(ema9[-1])
@@ -263,10 +258,15 @@ def _calculate_compact_indicators(candles, symbol: str = "UNKNOWN", tf: str = "U
         current_rsi = float(rsi[-1])
         current_volume_ratio = float(volume_ratios[-1])
 
+        # ✅ ДОБАВЛЕНО: Current MACD values
+        current_macd_line = float(macd_data.line[-1])
+        current_macd_histogram = float(macd_data.histogram[-1])
+
         # Проверка на NaN/Inf
         if any(np.isnan(v) or np.isinf(v) for v in [
             current_price, current_ema9, current_ema21,
-            current_ema50, current_rsi, current_volume_ratio
+            current_ema50, current_rsi, current_volume_ratio,
+            current_macd_line, current_macd_histogram  # ✅ ДОБАВЛЕНО
         ]):
             logger.warning(f"Stage 2: {symbol} {tf} - NaN/Inf detected in current values")
             return None
@@ -279,21 +279,25 @@ def _calculate_compact_indicators(candles, symbol: str = "UNKNOWN", tf: str = "U
                 'ema21': current_ema21,
                 'ema50': current_ema50,
                 'rsi': current_rsi,
-                'volume_ratio': current_volume_ratio
+                'volume_ratio': current_volume_ratio,
+                'macd_line': current_macd_line,        # ✅ ДОБАВЛЕНО
+                'macd_histogram': current_macd_histogram  # ✅ ДОБАВЛЕНО
             },
             'ema9': [float(x) for x in ema9[-30:]],
             'ema21': [float(x) for x in ema21[-30:]],
             'ema50': [float(x) for x in ema50[-30:]],
             'rsi': [float(x) for x in rsi[-30:]],
-            'volume_ratio': [float(x) for x in volume_ratios[-30:]]
+            'volume_ratio': [float(x) for x in volume_ratios[-30:]],
+            'macd_line': [float(x) for x in macd_data.line[-30:]],          # ✅ ДОБАВЛЕНО
+            'macd_histogram': [float(x) for x in macd_data.histogram[-30:]]  # ✅ ДОБАВЛЕНО
         }
 
-        # ✅ ФИНАЛЬНАЯ ПРОВЕРКА
         if not result.get('current'):
             logger.warning(f"Stage 2: {symbol} {tf} - Failed to build 'current' dict")
             return None
 
-        required_keys = ['price', 'ema9', 'ema21', 'ema50', 'rsi', 'volume_ratio']
+        # ✅ ОБНОВЛЕНО: Добавлены macd_line и macd_histogram
+        required_keys = ['price', 'ema9', 'ema21', 'ema50', 'rsi', 'volume_ratio', 'macd_line', 'macd_histogram']
         if not all(k in result['current'] for k in required_keys):
             logger.warning(f"Stage 2: {symbol} {tf} - Missing keys in 'current' dict")
             return None

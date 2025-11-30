@@ -1,12 +1,11 @@
 """
-Stage 3: Comprehensive Analysis - FIXED
+Stage 3: Comprehensive Analysis - FULL RESTORATION
 Файл: stages/stage3_analysis.py
 
-ИСПРАВЛЕНИЯ:
-1. Правильные импорты из indicators package
-2. Отключён func_correlation (модуль недоступен)
-3. Отключён func_volume_profile (модуль недоступен)
-4. Исправлен импорт get_session -> get_optimized_session
+ВОССТАНОВЛЕНО:
+- Market Data (funding, OI, orderbook)
+- BTC Correlation
+- Volume Profile
 """
 
 import logging
@@ -54,6 +53,8 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
     """
     Stage 3: Comprehensive analysis для выбранных пар
 
+    ✅ ВОССТАНОВЛЕНО: FULL PIPELINE (Market Data, Correlation, Volume Profile)
+
     Args:
         selected_pairs: Список символов выбранных в Stage 2
 
@@ -74,8 +75,8 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
         f"(provider: {config.STAGE3_PROVIDER})"
     )
 
-    # Загрузка BTC свечей (для correlation)
-    logger.debug("Stage 3: Loading BTC candles")
+    # ✅ ВОССТАНОВЛЕНО: Загрузка BTC свечей
+    logger.debug("Stage 3: Loading BTC candles for correlation analysis")
 
     btc_candles_1h_raw = await fetch_candles(
         'BTCUSDT',
@@ -105,6 +106,10 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
         symbol='BTCUSDT',
         interval=config.TIMEFRAME_LONG
     )
+
+    if not btc_candles_1h or not btc_candles_4h:
+        logger.error("Stage 3: BTC candles normalization failed")
+        return [], []
 
     approved_signals = []
     rejected_signals = []
@@ -159,51 +164,27 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
 
             current_price = float(candles_1h.closes[-1])
 
-            # Market data
+            # ✅ ВОССТАНОВЛЕНО: Market Data
+            logger.debug(f"Stage 3: {symbol} - Loading market data (funding, OI, orderbook)")
             market_data = await get_market_snapshot(symbol, session)
 
-            # ✅ ИСПРАВЛЕНО: Временно отключаем correlation (модуль недоступен)
-            # TODO: Портировать func_correlation в новую структуру
-            correlation_data = {
-                'symbol': symbol,
-                'should_block_signal': False,
-                'total_confidence_adjustment': 0,
-                'btc_correlation': {
-                    'correlation': 0.0,
-                    'correlation_strength': 'UNKNOWN',
-                    'is_correlated': False,
-                    'reasoning': 'Correlation module not ported yet'
-                },
-                'correlation_anomaly': {
-                    'anomaly_detected': False,
-                    'anomaly_type': 'NONE',
-                    'expected_direction': 'NEUTRAL',
-                    'confidence_adjustment': 0,
-                    'reasoning': 'Correlation module not ported yet'
-                },
-                'btc_alignment': {
-                    'aligned': True,
-                    'should_block': False,
-                    'confidence_adjustment': 0,
-                    'reasoning': 'Correlation module not ported yet'
-                },
-                'sector_analysis': {
-                    'confidence_adjustment': 0,
-                    'reasoning': 'Correlation module not ported yet'
-                },
-                'price_changes': {
-                    'symbol_1h': 0.0,
-                    'btc_1h': 0.0
-                },
-                'btc_trend': 'UNKNOWN'
-            }
+            # ✅ ВОССТАНОВЛЕНО: BTC Correlation
+            logger.debug(f"Stage 3: {symbol} - Analyzing BTC correlation")
+            from indicators import get_comprehensive_correlation_analysis
 
-            # ✅ ИСПРАВЛЕНО: Временно отключаем Volume Profile (модуль недоступен)
-            # TODO: Портировать func_volume_profile в новую структуру
-            vp_data = None
-            vp_analysis = None
+            correlation_data = get_comprehensive_correlation_analysis(
+                symbol=symbol,
+                symbol_candles=candles_1h,
+                btc_candles=btc_candles_1h,
+                signal_direction='UNKNOWN'  # Пока неизвестно
+            )
 
-            logger.debug(f"Stage 3: {symbol} - Volume Profile disabled (module not ported yet)")
+            # ✅ ВОССТАНОВЛЕНО: Volume Profile
+            logger.debug(f"Stage 3: {symbol} - Calculating Volume Profile")
+            from indicators import calculate_volume_profile, analyze_volume_profile
+
+            vp_data = calculate_volume_profile(candles_4h, num_bins=50)
+            vp_analysis = analyze_volume_profile(vp_data, current_price) if vp_data else None
 
             # Собираем comprehensive data
             comprehensive_data = {
@@ -213,15 +194,22 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 'indicators_1h': indicators_1h,
                 'indicators_4h': indicators_4h,
                 'current_price': current_price,
-                'market_data': market_data,
-                'correlation_data': correlation_data,
-                'volume_profile': vp_data,
-                'vp_analysis': vp_analysis,
+                'market_data': market_data,           # ✅ ВОССТАНОВЛЕНО
+                'correlation_data': correlation_data,  # ✅ ВОССТАНОВЛЕНО
+                'volume_profile': vp_data,            # ✅ ВОССТАНОВЛЕНО
+                'vp_analysis': vp_analysis,           # ✅ ВОССТАНОВЛЕНО
                 'btc_candles_1h': btc_candles_1h_raw,
                 'btc_candles_4h': btc_candles_4h_raw
             }
 
-            # AI анализ
+            logger.debug(
+                f"Stage 3: {symbol} - Comprehensive data assembled: "
+                f"market_data={'✓' if market_data else '✗'}, "
+                f"correlation={'✓' if correlation_data else '✗'}, "
+                f"volume_profile={'✓' if vp_data else '✗'}"
+            )
+
+            # AI анализ с ПОЛНЫМИ данными
             analysis_result = await ai_router.analyze_pair_comprehensive(
                 symbol,
                 comprehensive_data
@@ -302,8 +290,6 @@ def _calculate_full_indicators(candles) -> Dict:
     """
     Рассчитать полные индикаторы для Stage 3
 
-    ✅ ИСПРАВЛЕНО: Правильные импорты из indicators package
-
     Returns:
         {
             'current': {...},
@@ -316,7 +302,6 @@ def _calculate_full_indicators(candles) -> Dict:
             'volume_ratio_history': [...]
         }
     """
-    # ✅ ИМПОРТЫ ИЗ НОВОГО indicators PACKAGE
     from indicators.ema import calculate_ema
     from indicators.rsi import calculate_rsi
     from indicators.macd import calculate_macd

@@ -33,6 +33,24 @@ from .atr import (
     suggest_stop_loss
 )
 
+# ✅ ДОБАВЛЕНО: Correlation module
+from .correlation import (
+    calculate_correlation,
+    analyze_btc_correlation,
+    detect_correlation_anomaly,
+    get_comprehensive_correlation_analysis,
+    BTCCorrelationAnalysis,
+    CorrelationAnomalyAnalysis
+)
+
+# ✅ ДОБАВЛЕНО: Volume Profile module
+from .volume_profile import (
+    calculate_volume_profile,
+    analyze_volume_profile,
+    VolumeProfileData,
+    VolumeProfileAnalysis
+)
+
 __all__ = [
     # EMA
     'calculate_ema',
@@ -58,4 +76,18 @@ __all__ = [
     # ATR
     'calculate_atr',
     'suggest_stop_loss',
+
+    # ✅ ДОБАВЛЕНО: Correlation
+    'calculate_correlation',
+    'analyze_btc_correlation',
+    'detect_correlation_anomaly',
+    'get_comprehensive_correlation_analysis',
+    'BTCCorrelationAnalysis',
+    'CorrelationAnomalyAnalysis',
+
+    # ✅ ДОБАВЛЕНО: Volume Profile
+    'calculate_volume_profile',
+    'analyze_volume_profile',
+    'VolumeProfileData',
+    'VolumeProfileAnalysis',
 ]
