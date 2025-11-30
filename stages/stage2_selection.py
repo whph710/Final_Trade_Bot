@@ -1,8 +1,11 @@
 """
-Stage 2: AI Pair Selection
+Stage 2: AI Pair Selection - FIXED
 Файл: stages/stage2_selection.py
 
-AI отбор лучших пар на базе compact multi-timeframe данных
+ИСПРАВЛЕНИЯ:
+- Добавлено детальное логирование каждого этапа
+- Исправлена проверка на None в normalize_candles
+- Улучшена обработка ошибок
 """
 
 import logging
@@ -41,12 +44,17 @@ async def run_stage2(
 
     # Подготовка compact данных для AI
     ai_input_data = []
+    failed_symbols = []
 
-    for candidate in candidates:
+    for idx, candidate in enumerate(candidates, 1):
         symbol = candidate.symbol
 
         try:
+            logger.debug(f"Stage 2: [{idx}/{len(candidates)}] Processing {symbol}...")
+
             # Загрузка 1H и 4H свечей
+            logger.debug(f"Stage 2: {symbol} fetching candles...")
+
             candles_1h_raw = await fetch_candles(
                 symbol,
                 config.TIMEFRAME_SHORT,
@@ -59,11 +67,21 @@ async def run_stage2(
                 config.STAGE2_CANDLES_4H
             )
 
+            # ИСПРАВЛЕНО: Детальное логирование
+            logger.debug(
+                f"Stage 2: {symbol} loaded - "
+                f"1H: {len(candles_1h_raw) if candles_1h_raw else 0} candles, "
+                f"4H: {len(candles_4h_raw) if candles_4h_raw else 0} candles"
+            )
+
             if not candles_1h_raw or not candles_4h_raw:
-                logger.debug(f"Stage 2: Missing candles for {symbol}")
+                logger.debug(f"Stage 2: {symbol} SKIP - Missing raw candles")
+                failed_symbols.append((symbol, "Missing raw candles"))
                 continue
 
             # Нормализация
+            logger.debug(f"Stage 2: {symbol} normalizing candles...")
+
             candles_1h = normalize_candles(
                 candles_1h_raw,
                 symbol=symbol,
@@ -77,21 +95,52 @@ async def run_stage2(
             )
 
             # ✅ КРИТИЧНО: Проверка на None (не на truthy/falsy!)
-            if candles_1h is None or candles_4h is None:
-                logger.debug(f"Stage 2: Normalization failed for {symbol}")
+            if candles_1h is None:
+                logger.warning(f"Stage 2: {symbol} SKIP - 1H normalization returned None")
+                failed_symbols.append((symbol, "1H normalization failed"))
+                continue
+
+            if candles_4h is None:
+                logger.warning(f"Stage 2: {symbol} SKIP - 4H normalization returned None")
+                failed_symbols.append((symbol, "4H normalization failed"))
+                continue
+
+            # Проверка валидности
+            if not candles_1h.is_valid:
+                logger.warning(f"Stage 2: {symbol} SKIP - 1H candles invalid")
+                failed_symbols.append((symbol, "1H candles invalid"))
+                continue
+
+            if not candles_4h.is_valid:
+                logger.warning(f"Stage 2: {symbol} SKIP - 4H candles invalid")
+                failed_symbols.append((symbol, "4H candles invalid"))
                 continue
 
             # Рассчитываем compact indicators
-            indicators_1h = _calculate_compact_indicators(candles_1h)
-            indicators_4h = _calculate_compact_indicators(candles_4h)
+            logger.debug(f"Stage 2: {symbol} calculating indicators...")
+
+            indicators_1h = _calculate_compact_indicators(candles_1h, symbol, "1H")
+            indicators_4h = _calculate_compact_indicators(candles_4h, symbol, "4H")
 
             # ✅ КРИТИЧНО: Проверка на None + наличие 'current'
-            if indicators_1h is None or indicators_4h is None:
-                logger.debug(f"Stage 2: Indicators calculation failed for {symbol}")
+            if indicators_1h is None:
+                logger.warning(f"Stage 2: {symbol} SKIP - 1H indicators calculation returned None")
+                failed_symbols.append((symbol, "1H indicators failed"))
                 continue
 
-            if not indicators_1h.get('current') or not indicators_4h.get('current'):
-                logger.debug(f"Stage 2: Missing 'current' data for {symbol}")
+            if indicators_4h is None:
+                logger.warning(f"Stage 2: {symbol} SKIP - 4H indicators calculation returned None")
+                failed_symbols.append((symbol, "4H indicators failed"))
+                continue
+
+            if not indicators_1h.get('current'):
+                logger.warning(f"Stage 2: {symbol} SKIP - Missing 'current' in 1H indicators")
+                failed_symbols.append((symbol, "Missing 1H current data"))
+                continue
+
+            if not indicators_4h.get('current'):
+                logger.warning(f"Stage 2: {symbol} SKIP - Missing 'current' in 4H indicators")
+                failed_symbols.append((symbol, "Missing 4H current data"))
                 continue
 
             # Формируем данные для AI
@@ -105,12 +154,37 @@ async def run_stage2(
                 'indicators_4h': indicators_4h
             })
 
+            logger.info(f"Stage 2: ✓ {symbol} prepared successfully")
+
         except Exception as e:
-            logger.debug(f"Stage 2: Error preparing {symbol}: {e}")
+            logger.error(f"Stage 2: {symbol} ERROR - {e}", exc_info=True)
+            failed_symbols.append((symbol, f"Exception: {str(e)[:50]}"))
             continue
 
+    # Логирование результатов подготовки
+    logger.info("=" * 70)
+    logger.info(f"Stage 2: Data preparation complete")
+    logger.info(f"  • Successfully prepared: {len(ai_input_data)}/{len(candidates)}")
+    logger.info(f"  • Failed: {len(failed_symbols)}/{len(candidates)}")
+
+    if failed_symbols and len(failed_symbols) <= 10:
+        logger.info(f"\nFailed symbols:")
+        for sym, reason in failed_symbols:
+            logger.info(f"  • {sym}: {reason}")
+    elif failed_symbols:
+        logger.info(f"\nShowing first 10 failed symbols:")
+        for sym, reason in failed_symbols[:10]:
+            logger.info(f"  • {sym}: {reason}")
+        logger.info(f"  ... and {len(failed_symbols) - 10} more")
+
+    logger.info("=" * 70)
+
     if not ai_input_data:
-        logger.warning("Stage 2: No valid AI input data")
+        logger.error("Stage 2: No valid AI input data prepared - CRITICAL FAILURE")
+        logger.error("All candidates failed validation. Check:")
+        logger.error("  1. Bybit API connectivity")
+        logger.error("  2. Candle data validity")
+        logger.error("  3. Indicator calculation parameters")
         return []
 
     logger.info(
@@ -130,16 +204,25 @@ async def run_stage2(
 
     if selected_pairs:
         logger.info(f"Selected: {selected_pairs}")
+    else:
+        logger.warning("Stage 2: AI selected 0 pairs")
 
     return selected_pairs
 
 
-def _calculate_compact_indicators(candles) -> Dict:
+def _calculate_compact_indicators(candles, symbol: str = "UNKNOWN", tf: str = "UNKNOWN") -> Dict:
     """
     Рассчитать compact indicators для Stage 2
 
+    ИСПРАВЛЕНО: Возвращает None при ошибках (не пустой dict!)
+
+    Args:
+        candles: NormalizedCandles объект
+        symbol: Символ (для логирования)
+        tf: Timeframe (для логирования)
+
     Returns:
-        Dict с indicators ИЛИ None при ошибке (не пустой dict!)
+        Dict с indicators ИЛИ None при ошибке
     """
     from indicators import analyze_triple_ema, analyze_rsi, analyze_volume
 
@@ -147,16 +230,23 @@ def _calculate_compact_indicators(candles) -> Dict:
         # EMA
         ema_analysis = analyze_triple_ema(candles)
 
+        if not ema_analysis:
+            logger.debug(f"Stage 2: {symbol} {tf} - EMA analysis returned None")
+            return None
+
         # RSI
         rsi_analysis = analyze_rsi(candles)
+
+        if not rsi_analysis:
+            logger.debug(f"Stage 2: {symbol} {tf} - RSI analysis returned None")
+            return None
 
         # Volume
         volume_analysis = analyze_volume(candles)
 
-        # ✅ ДОБАВЬ ЭТУ ПРОВЕРКУ:
-        if not ema_analysis or not rsi_analysis or not volume_analysis:
-            logger.debug("Stage 2: One or more indicators returned None")
-            return None  # ← Возвращаем None вместо {}
+        if not volume_analysis:
+            logger.debug(f"Stage 2: {symbol} {tf} - Volume analysis returned None")
+            return None
 
         # Извлекаем историю (последние 30 значений)
         from indicators.ema import calculate_ema
@@ -185,16 +275,21 @@ def _calculate_compact_indicators(candles) -> Dict:
             'volume_ratio': [float(x) for x in volume_ratios[-30:]]
         }
 
-        # ✅ ДОБАВЬ ФИНАЛЬНУЮ ПРОВЕРКУ:
+        # ✅ ФИНАЛЬНАЯ ПРОВЕРКА
         if not result.get('current'):
-            logger.debug("Stage 2: Failed to build 'current' dict")
+            logger.debug(f"Stage 2: {symbol} {tf} - Failed to build 'current' dict")
             return None
 
+        if not all(k in result['current'] for k in ['price', 'ema9', 'ema21', 'ema50', 'rsi', 'volume_ratio']):
+            logger.debug(f"Stage 2: {symbol} {tf} - Missing keys in 'current' dict")
+            return None
+
+        logger.debug(f"Stage 2: {symbol} {tf} - Indicators calculated successfully")
         return result
 
     except Exception as e:
-        logger.error(f"Compact indicators calculation error: {e}")
-        return None  # ← Возвращаем None вместо {}
+        logger.error(f"Stage 2: {symbol} {tf} - Indicators calculation error: {e}")
+        return None
 
 
 def _extract_last_candles(candles_raw: List, count: int) -> List:

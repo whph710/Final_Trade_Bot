@@ -1,8 +1,9 @@
 """
-Data Normalizer
+Data Normalizer - IMPROVED LOGGING
 Файл: data_providers/data_normalizer.py
 
-Преобразование raw данных Bybit в единый формат NormalizedCandles
+ИСПРАВЛЕНИЯ:
+- Добавлено детальное логирование причин невалидности
 """
 
 import numpy as np
@@ -58,8 +59,15 @@ def normalize_candles(
     Returns:
         NormalizedCandles объект или None при ошибке
     """
-    if not raw_candles or len(raw_candles) < min_length:
-        logger.debug(f"Insufficient candles for {symbol} {interval}: {len(raw_candles) if raw_candles else 0}")
+    if not raw_candles:
+        logger.debug(f"normalize_candles: {symbol} {interval} - No raw candles provided")
+        return None
+
+    if len(raw_candles) < min_length:
+        logger.debug(
+            f"normalize_candles: {symbol} {interval} - "
+            f"Insufficient candles: {len(raw_candles)} < {min_length}"
+        )
         return None
 
     try:
@@ -89,7 +97,7 @@ def normalize_candles(
         )
 
     except (ValueError, IndexError, TypeError) as e:
-        logger.warning(f"Error normalizing candles for {symbol} {interval}: {e}")
+        logger.warning(f"normalize_candles: {symbol} {interval} - Error: {e}")
         return None
 
 
@@ -106,6 +114,8 @@ def _validate_candles_data(
     """
     Валидация нормализованных данных
 
+    ИСПРАВЛЕНО: Детальное логирование причин невалидности
+
     Returns:
         True если данные корректны, False иначе
     """
@@ -113,19 +123,40 @@ def _validate_candles_data(
         # Проверка 1: Все массивы одинаковой длины
         lengths = [len(timestamps), len(opens), len(highs), len(lows), len(closes), len(volumes)]
         if len(set(lengths)) != 1:
-            logger.warning(f"Mismatched array lengths for {symbol} {interval}")
+            logger.warning(
+                f"validate: {symbol} {interval} - "
+                f"Mismatched array lengths: {lengths}"
+            )
             return False
 
         # Проверка 2: Нет NaN или Inf
         arrays = [opens, highs, lows, closes, volumes]
-        for arr in arrays:
-            if np.any(np.isnan(arr)) or np.any(np.isinf(arr)):
-                logger.warning(f"NaN or Inf detected in {symbol} {interval}")
+        for idx, arr in enumerate(arrays):
+            if np.any(np.isnan(arr)):
+                logger.warning(
+                    f"validate: {symbol} {interval} - "
+                    f"NaN detected in array {idx}"
+                )
+                return False
+            if np.any(np.isinf(arr)):
+                logger.warning(
+                    f"validate: {symbol} {interval} - "
+                    f"Inf detected in array {idx}"
+                )
                 return False
 
         # Проверка 3: Все цены положительные
-        if np.any(opens <= 0) or np.any(highs <= 0) or np.any(lows <= 0) or np.any(closes <= 0):
-            logger.warning(f"Non-positive prices in {symbol} {interval}")
+        if np.any(opens <= 0):
+            logger.warning(f"validate: {symbol} {interval} - Non-positive opens")
+            return False
+        if np.any(highs <= 0):
+            logger.warning(f"validate: {symbol} {interval} - Non-positive highs")
+            return False
+        if np.any(lows <= 0):
+            logger.warning(f"validate: {symbol} {interval} - Non-positive lows")
+            return False
+        if np.any(closes <= 0):
+            logger.warning(f"validate: {symbol} {interval} - Non-positive closes")
             return False
 
         # Проверка 4: High >= max(Open, Close), Low <= min(Open, Close)
@@ -133,24 +164,36 @@ def _validate_candles_data(
             max_price = max(opens[i], closes[i])
             min_price = min(opens[i], closes[i])
 
-            if highs[i] < max_price or lows[i] > min_price:
-                logger.warning(f"Invalid OHLC relationship in {symbol} {interval} at index {i}")
+            if highs[i] < max_price:
+                logger.warning(
+                    f"validate: {symbol} {interval} - "
+                    f"Invalid OHLC at index {i}: high < max(open,close)"
+                )
+                return False
+
+            if lows[i] > min_price:
+                logger.warning(
+                    f"validate: {symbol} {interval} - "
+                    f"Invalid OHLC at index {i}: low > min(open,close)"
+                )
                 return False
 
         # Проверка 5: Объёмы неотрицательные
         if np.any(volumes < 0):
-            logger.warning(f"Negative volumes in {symbol} {interval}")
+            logger.warning(f"validate: {symbol} {interval} - Negative volumes")
             return False
 
         # Проверка 6: Timestamps растут (свечи в правильном порядке)
         if not np.all(np.diff(timestamps) > 0):
-            logger.warning(f"Non-increasing timestamps in {symbol} {interval}")
+            logger.warning(f"validate: {symbol} {interval} - Non-increasing timestamps")
             return False
 
+        # Всё ОК
+        logger.debug(f"validate: {symbol} {interval} - ✓ VALID ({len(timestamps)} candles)")
         return True
 
     except Exception as e:
-        logger.warning(f"Validation error for {symbol} {interval}: {e}")
+        logger.warning(f"validate: {symbol} {interval} - Validation error: {e}")
         return False
 
 
