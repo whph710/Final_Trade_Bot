@@ -140,8 +140,8 @@ STAGE2_MODEL = os.getenv('STAGE2_MODEL', 'deepseek-chat')
 STAGE2_TEMPERATURE = safe_float(os.getenv('STAGE2_TEMPERATURE', '0.3'), 0.3)
 STAGE2_MAX_TOKENS = safe_int(os.getenv('STAGE2_MAX_TOKENS', '2000'), 2000)
 
-STAGE2_CANDLES_1H = 30  # Compact data для Stage 2
-STAGE2_CANDLES_4H = 30
+STAGE2_CANDLES_1H = 60  # Compact data для Stage 2
+STAGE2_CANDLES_4H = 60
 
 # ============================================================================
 # STAGE 3: AI COMPREHENSIVE ANALYSIS (Full Data)

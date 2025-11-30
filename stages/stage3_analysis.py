@@ -1,8 +1,12 @@
 """
-Stage 3: Comprehensive Analysis
+Stage 3: Comprehensive Analysis - FIXED
 Файл: stages/stage3_analysis.py
 
-Полный AI анализ с comprehensive data (БЕЗ 1D)
+ИСПРАВЛЕНИЯ:
+1. Правильные импорты из indicators package
+2. Отключён func_correlation (модуль недоступен)
+3. Отключён func_volume_profile (модуль недоступен)
+4. Исправлен импорт get_session -> get_optimized_session
 """
 
 import logging
@@ -56,13 +60,8 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
     Returns:
         (approved_signals: List[TradingSignal], rejected_signals: List[Dict])
     """
-    from data_providers import (
-        fetch_candles, normalize_candles, get_market_snapshot, get_optimized_session
-    )
-    from indicators import (
-        analyze_triple_ema, analyze_rsi, analyze_macd,
-        analyze_volume, calculate_atr
-    )
+    from data_providers import fetch_candles, normalize_candles, get_market_snapshot
+    from data_providers.bybit_client import get_session
     from ai.ai_router import AIRouter
     from config import config
 
@@ -111,7 +110,7 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
     rejected_signals = []
 
     ai_router = AIRouter()
-    session = await get_optimized_session()
+    session = await get_session()
 
     # Анализ каждой пары
     for symbol in selected_pairs:
@@ -163,36 +162,48 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
             # Market data
             market_data = await get_market_snapshot(symbol, session)
 
-            # Correlation (импортируем функцию)
-            from trade_bot_programm.func_correlation import get_comprehensive_correlation_analysis
+            # ✅ ИСПРАВЛЕНО: Временно отключаем correlation (модуль недоступен)
+            # TODO: Портировать func_correlation в новую структуру
+            correlation_data = {
+                'symbol': symbol,
+                'should_block_signal': False,
+                'total_confidence_adjustment': 0,
+                'btc_correlation': {
+                    'correlation': 0.0,
+                    'correlation_strength': 'UNKNOWN',
+                    'is_correlated': False,
+                    'reasoning': 'Correlation module not ported yet'
+                },
+                'correlation_anomaly': {
+                    'anomaly_detected': False,
+                    'anomaly_type': 'NONE',
+                    'expected_direction': 'NEUTRAL',
+                    'confidence_adjustment': 0,
+                    'reasoning': 'Correlation module not ported yet'
+                },
+                'btc_alignment': {
+                    'aligned': True,
+                    'should_block': False,
+                    'confidence_adjustment': 0,
+                    'reasoning': 'Correlation module not ported yet'
+                },
+                'sector_analysis': {
+                    'confidence_adjustment': 0,
+                    'reasoning': 'Correlation module not ported yet'
+                },
+                'price_changes': {
+                    'symbol_1h': 0.0,
+                    'btc_1h': 0.0
+                },
+                'btc_trend': 'UNKNOWN'
+            }
 
-            correlation_data = await get_comprehensive_correlation_analysis(
-                symbol,
-                candles_1h_raw,
-                btc_candles_1h_raw,
-                'UNKNOWN',  # direction определит AI
-                None
-            )
-
-            # Volume Profile (опционально)
+            # ✅ ИСПРАВЛЕНО: Временно отключаем Volume Profile (модуль недоступен)
+            # TODO: Портировать func_volume_profile в новую структуру
             vp_data = None
             vp_analysis = None
 
-            try:
-                from trade_bot_programm.func_volume_profile import (
-                    calculate_volume_profile_for_candles,
-                    analyze_volume_profile
-                )
-
-                vp_data = calculate_volume_profile_for_candles(
-                    candles_4h_raw,
-                    num_bins=50
-                )
-
-                if vp_data:
-                    vp_analysis = analyze_volume_profile(vp_data, current_price)
-            except Exception as e:
-                logger.debug(f"Volume Profile calculation failed for {symbol}: {e}")
+            logger.debug(f"Stage 3: {symbol} - Volume Profile disabled (module not ported yet)")
 
             # Собираем comprehensive data
             comprehensive_data = {
@@ -291,6 +302,8 @@ def _calculate_full_indicators(candles) -> Dict:
     """
     Рассчитать полные индикаторы для Stage 3
 
+    ✅ ИСПРАВЛЕНО: Правильные импорты из indicators package
+
     Returns:
         {
             'current': {...},
@@ -303,9 +316,12 @@ def _calculate_full_indicators(candles) -> Dict:
             'volume_ratio_history': [...]
         }
     """
-    from indicators import (
-        calculate_ema, calculate_rsi, calculate_macd, calculate_volume_ratio
-    )
+    # ✅ ИМПОРТЫ ИЗ НОВОГО indicators PACKAGE
+    from indicators.ema import calculate_ema
+    from indicators.rsi import calculate_rsi
+    from indicators.macd import calculate_macd
+    from indicators.volume import calculate_volume_ratio
+    from indicators.atr import calculate_atr
     from config import config
 
     try:
