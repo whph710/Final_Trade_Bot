@@ -6,9 +6,11 @@ Stage 2: AI Pair Selection - FIXED
 - Добавлено детальное логирование каждого этапа
 - Исправлена проверка на None в normalize_candles
 - Улучшена обработка ошибок
+- КРИТИЧНО: Исправлены импорты indicators
 """
 
 import logging
+import numpy as np
 from typing import List, Dict
 
 logger = logging.getLogger(__name__)
@@ -29,7 +31,6 @@ async def run_stage2(
         Список выбранных символов (например ['BTCUSDT', 'ETHUSDT'])
     """
     from data_providers import fetch_candles, normalize_candles
-    from indicators import analyze_triple_ema, analyze_rsi, analyze_volume
     from ai.ai_router import AIRouter
     from config import config
 
@@ -214,7 +215,7 @@ def _calculate_compact_indicators(candles, symbol: str = "UNKNOWN", tf: str = "U
     """
     Рассчитать compact indicators для Stage 2
 
-    ИСПРАВЛЕНО: Возвращает None при ошибках (не пустой dict!)
+    ✅ ИСПРАВЛЕНО: Правильные импорты из indicators package
 
     Args:
         candles: NormalizedCandles объект
@@ -224,49 +225,61 @@ def _calculate_compact_indicators(candles, symbol: str = "UNKNOWN", tf: str = "U
     Returns:
         Dict с indicators ИЛИ None при ошибке
     """
-    from indicators import analyze_triple_ema, analyze_rsi, analyze_volume
-
     try:
-        # EMA
-        ema_analysis = analyze_triple_ema(candles)
-
-        if not ema_analysis:
-            logger.debug(f"Stage 2: {symbol} {tf} - EMA analysis returned None")
+        # ✅ КРИТИЧНО: Проверка на None ПЕРВОЙ
+        if candles is None:
+            logger.warning(f"Stage 2: {symbol} {tf} - candles is None")
             return None
 
-        # RSI
-        rsi_analysis = analyze_rsi(candles)
-
-        if not rsi_analysis:
-            logger.debug(f"Stage 2: {symbol} {tf} - RSI analysis returned None")
+        if not candles.is_valid:
+            logger.warning(f"Stage 2: {symbol} {tf} - candles.is_valid = False")
             return None
 
-        # Volume
-        volume_analysis = analyze_volume(candles)
-
-        if not volume_analysis:
-            logger.debug(f"Stage 2: {symbol} {tf} - Volume analysis returned None")
+        # Проверка минимальной длины
+        if len(candles.closes) < 50:
+            logger.warning(f"Stage 2: {symbol} {tf} - insufficient candles ({len(candles.closes)} < 50)")
             return None
 
-        # Извлекаем историю (последние 30 значений)
+        # ✅ ИМПОРТЫ ИЗ НОВОГО indicators PACKAGE
         from indicators.ema import calculate_ema
         from indicators.rsi import calculate_rsi
         from indicators.volume import calculate_volume_ratio
+        from config import config
 
-        ema9 = calculate_ema(candles.closes, 9)
-        ema21 = calculate_ema(candles.closes, 21)
-        ema50 = calculate_ema(candles.closes, 50)
-        rsi = calculate_rsi(candles.closes, 14)
-        volume_ratios = calculate_volume_ratio(candles.volumes, 20)
+        logger.debug(f"Stage 2: {symbol} {tf} - calculating indicators...")
 
+        # Рассчитываем индикаторы
+        ema9 = calculate_ema(candles.closes, config.EMA_FAST)
+        ema21 = calculate_ema(candles.closes, config.EMA_MEDIUM)
+        ema50 = calculate_ema(candles.closes, config.EMA_SLOW)
+        rsi = calculate_rsi(candles.closes, config.RSI_PERIOD)
+        volume_ratios = calculate_volume_ratio(candles.volumes, config.VOLUME_WINDOW)
+
+        # Извлекаем текущие значения
+        current_price = float(candles.closes[-1])
+        current_ema9 = float(ema9[-1])
+        current_ema21 = float(ema21[-1])
+        current_ema50 = float(ema50[-1])
+        current_rsi = float(rsi[-1])
+        current_volume_ratio = float(volume_ratios[-1])
+
+        # Проверка на NaN/Inf
+        if any(np.isnan(v) or np.isinf(v) for v in [
+            current_price, current_ema9, current_ema21,
+            current_ema50, current_rsi, current_volume_ratio
+        ]):
+            logger.warning(f"Stage 2: {symbol} {tf} - NaN/Inf detected in current values")
+            return None
+
+        # Формируем результат
         result = {
             'current': {
-                'price': float(candles.closes[-1]),
-                'ema9': ema_analysis.ema9_current,
-                'ema21': ema_analysis.ema21_current,
-                'ema50': ema_analysis.ema50_current,
-                'rsi': rsi_analysis.rsi_current,
-                'volume_ratio': volume_analysis.volume_ratio_current
+                'price': current_price,
+                'ema9': current_ema9,
+                'ema21': current_ema21,
+                'ema50': current_ema50,
+                'rsi': current_rsi,
+                'volume_ratio': current_volume_ratio
             },
             'ema9': [float(x) for x in ema9[-30:]],
             'ema21': [float(x) for x in ema21[-30:]],
@@ -277,18 +290,19 @@ def _calculate_compact_indicators(candles, symbol: str = "UNKNOWN", tf: str = "U
 
         # ✅ ФИНАЛЬНАЯ ПРОВЕРКА
         if not result.get('current'):
-            logger.debug(f"Stage 2: {symbol} {tf} - Failed to build 'current' dict")
+            logger.warning(f"Stage 2: {symbol} {tf} - Failed to build 'current' dict")
             return None
 
-        if not all(k in result['current'] for k in ['price', 'ema9', 'ema21', 'ema50', 'rsi', 'volume_ratio']):
-            logger.debug(f"Stage 2: {symbol} {tf} - Missing keys in 'current' dict")
+        required_keys = ['price', 'ema9', 'ema21', 'ema50', 'rsi', 'volume_ratio']
+        if not all(k in result['current'] for k in required_keys):
+            logger.warning(f"Stage 2: {symbol} {tf} - Missing keys in 'current' dict")
             return None
 
-        logger.debug(f"Stage 2: {symbol} {tf} - Indicators calculated successfully")
+        logger.debug(f"Stage 2: {symbol} {tf} - ✓ Indicators calculated successfully")
         return result
 
     except Exception as e:
-        logger.error(f"Stage 2: {symbol} {tf} - Indicators calculation error: {e}")
+        logger.error(f"Stage 2: {symbol} {tf} - Indicators calculation error: {e}", exc_info=True)
         return None
 
 
