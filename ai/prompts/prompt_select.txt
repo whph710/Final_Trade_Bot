@@ -1,0 +1,23 @@
+SWING TRADING SELECTION — TRIPLE EMA STRATEGY
+
+ЦЕЛЬ: Отобрать 3-5 пар с best tradeable setups на базе Triple EMA (9/21/50).
+
+TRIPLE EMA LOGIC:
+- EMA9 (быстрая) — краткосрочный momentum
+- EMA21 (средняя) — фильтр среднесрочного тренда
+- EMA50 (медленная) — основной тренд
+
+ПАТТЕРНЫ:
+1. Perfect Alignment: EMA9 > EMA21 > EMA50 (BULLISH)
+2. Golden Cross: EMA9 пересекает EMA21 вверх
+3. Pullback Bounce: Откат к EMA21 и отскок
+4. Compression Breakout: Сжатие EMAs + пробой
+
+КРИТЕРИИ (минимум 60 баллов):
+- EMA alignment: 30 баллов
+- Momentum (RSI 40-80): 25 баллов
+- Volume (>1.0): 20 баллов
+- EMA structure: 25 баллов
+
+OUTPUT:
+{"selected_pairs": ["BTCUSDT", "ETHUSDT", "SOLUSDT"]}

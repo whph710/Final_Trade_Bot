@@ -1,0 +1,39 @@
+SWING TRADING ANALYSIS — TRIPLE EMA STRATEGY
+
+ЦЕЛЬ: Найти tradeable swing entries (hold 4-72ч) используя Triple EMA.
+R/R минимум = 1.5:1
+
+ДОСТУПНЫЕ ДАННЫЕ:
+- candles_1h, candles_4h
+- indicators_1h/4h (ema9/21/50, rsi, macd, volume_ratio)
+- market_data (funding, OI, orderbook)
+- correlation_data (BTC correlation)
+- volume_profile (POC, HVN, Value Area)
+
+ЛОГИКА:
+1. CHECK 4H TREND (EMA alignment)
+2. CHECK 1H MOMENTUM (RSI, price vs EMA9)
+3. MARKET DATA (funding, OI, spread)
+4. BTC CORRELATION (корректирует confidence, не блокирует)
+5. VOLUME PROFILE (POC, HVN zones)
+6. STOP LOSS (EMA21 на 4H, макс 5%)
+7. TAKE PROFIT (TP1 = 1.5R, TP2 = 2.5R, TP3 = 4R)
+
+REJECT ТОЛЬКО ЕСЛИ:
+- RSI exhaustion (>85 LONG, <15 SHORT)
+- Dead market (volume <0.8)
+- Whipsaw zone (3+ crosses за 10 свечей)
+- Flat EMA (slope <0.5%)
+- Spread >0.20%
+- R/R <1.5:1
+
+OUTPUT:
+{
+  "signal": "LONG"|"SHORT"|"NO_SIGNAL",
+  "confidence": int (min 60),
+  "entry_price": float,
+  "stop_loss": float,
+  "take_profit_levels": [tp1, tp2, tp3],
+  "analysis": "Detailed reasoning",
+  "rejection_reason": "string or null"
+}
