@@ -1,8 +1,10 @@
 """
-Telegram Bot Main
+Telegram Bot Main - FIXED SESSION CLEANUP
 Файл: telegram/bot_main.py
 
-Основной класс Telegram бота с aiogram
+ИЗМЕНЕНИЯ:
+- Добавлен cleanup_session() при завершении
+- Улучшенная обработка ошибок
 """
 
 import asyncio
@@ -27,14 +29,6 @@ class TradingBotTelegram:
             user_id: int,
             group_id: int
     ):
-        """
-        Инициализация бота
-
-        Args:
-            bot_token: Telegram Bot Token
-            user_id: ID пользователя (владелец)
-            group_id: ID группы для публикации сигналов
-        """
         self.bot = Bot(token=bot_token)
         self.dp = Dispatcher()
 
@@ -121,47 +115,54 @@ class TradingBotTelegram:
                 from data_providers import get_all_trading_pairs, cleanup_session
 
                 # Stage 1: Filter
+                logger.info("Manual run: Starting Stage 1")
                 pairs = await get_all_trading_pairs()
                 candidates = await run_stage1(pairs)
 
                 if not candidates:
                     await self.bot.send_message(
                         chat_id=self.user_id,
-                        text="❌ Stage 1: Сигналов не найдено",
+                        text="❌ <b>Stage 1: Сигналов не найдено</b>\n\n"
+                             "Проверьте настройки фильтров (MIN_CONFIDENCE, MIN_VOLUME_RATIO)",
                         parse_mode="HTML"
                     )
+                    await cleanup_session()
                     return
 
                 await self.bot.send_message(
                     chat_id=self.user_id,
-                    text=f"✅ Stage 1: Найдено {len(candidates)} сигналов",
+                    text=f"✅ <b>Stage 1: Найдено {len(candidates)} сигналов</b>",
                     parse_mode="HTML"
                 )
 
                 # Stage 2: AI Selection
+                logger.info("Manual run: Starting Stage 2")
                 selected_pairs = await run_stage2(candidates)
 
                 if not selected_pairs:
                     await self.bot.send_message(
                         chat_id=self.user_id,
-                        text="❌ Stage 2: AI не выбрал пары",
+                        text="❌ <b>Stage 2: AI не выбрал пары</b>",
                         parse_mode="HTML"
                     )
+                    await cleanup_session()
                     return
 
                 await self.bot.send_message(
                     chat_id=self.user_id,
                     text=(
-                        f"✅ Stage 2: AI выбрал {len(selected_pairs)} пар\n\n"
+                        f"✅ <b>Stage 2: AI выбрал {len(selected_pairs)} пар</b>\n\n"
                         f"{'  •  '.join(selected_pairs)}"
                     ),
                     parse_mode="HTML"
                 )
 
                 # Stage 3: Comprehensive Analysis
+                logger.info("Manual run: Starting Stage 3")
                 approved_signals, rejected_signals = await run_stage3(selected_pairs)
 
-                # Cleanup
+                # ✅ CLEANUP SESSION
+                logger.info("Manual run: Cleaning up session")
                 await cleanup_session()
 
             finally:
@@ -198,6 +199,14 @@ class TradingBotTelegram:
         except Exception as e:
             await self._stop_typing_indicator()
             logger.exception("Error running trading bot manually")
+
+            # ✅ CLEANUP даже при ошибке
+            try:
+                from data_providers import cleanup_session
+                await cleanup_session()
+            except:
+                pass
+
             await self.bot.send_message(
                 chat_id=self.user_id,
                 text=f"❌ <b>Ошибка:</b> {str(e)[:200]}",
@@ -205,12 +214,7 @@ class TradingBotTelegram:
             )
 
     async def _send_signals_to_group(self, signals: list):
-        """
-        Отправить сигналы в группу
-
-        Args:
-            signals: Список TradingSignal объектов
-        """
+        """Отправить сигналы в группу"""
         from telegram.formatters import format_signal_for_telegram
 
         try:
@@ -231,12 +235,7 @@ class TradingBotTelegram:
             logger.error(f"Error sending signals to group: {e}")
 
     async def _send_rejected_signals(self, rejected_signals: list):
-        """
-        Отправить rejected signals в личку
-
-        Args:
-            rejected_signals: Список rejected сигналов
-        """
+        """Отправить rejected signals в личку"""
         if not rejected_signals:
             return
 
@@ -298,7 +297,6 @@ class TradingBotTelegram:
 
     async def show_statistics(self, message: Message):
         """Показать статистику"""
-        # TODO: Интеграция со StatsManager
         stats_text = (
             "📈 <b>СТАТИСТИКА</b>\n\n"
             "Функция в разработке"
@@ -358,6 +356,14 @@ class TradingBotTelegram:
         finally:
             await self._stop_typing_indicator()
             await self.bot.session.close()
+
+            # ✅ CLEANUP SESSION при завершении
+            try:
+                from data_providers import cleanup_session
+                await cleanup_session()
+                logger.info("Session cleaned up on bot shutdown")
+            except Exception as e:
+                logger.debug(f"Cleanup on shutdown: {e}")
 
 
 async def run_telegram_bot():
