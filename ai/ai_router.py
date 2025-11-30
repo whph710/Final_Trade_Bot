@@ -5,7 +5,8 @@ AI Router
 Роутер для работы с разными AI провайдерами (DeepSeek, Claude)
 
 ИСПРАВЛЕНО:
-- Добавлен _serialize_to_json() для корректной сериализации dataclass объектов
+- Добавлена поддержка forced_direction для ручного анализа
+- _serialize_to_json() для корректной сериализации dataclass объектов
 - Улучшена обработка take_profit_levels (защита от None)
 """
 
@@ -318,6 +319,26 @@ class AIRouter:
             # Загружаем промпт
             system_prompt = load_prompt_cached("prompt_analyze.txt")
 
+            # ✅ НОВОЕ: Проверяем forced_direction
+            forced_direction = comprehensive_data.get('forced_direction')
+
+            if forced_direction:
+                logger.info(
+                    f"Stage 3 {symbol}: FORCED DIRECTION = {forced_direction}"
+                )
+
+                # Добавляем инструкцию в system prompt
+                direction_instruction = (
+                    f"\n\n🎯 CRITICAL INSTRUCTION FOR THIS ANALYSIS:\n"
+                    f"User specifically requested {forced_direction} signal analysis.\n"
+                    f"You MUST analyze ONLY {forced_direction} opportunities.\n"
+                    f"If {forced_direction} setup is not viable based on technical analysis, "
+                    f"return NO_SIGNAL with detailed rejection_reason explaining why {forced_direction} "
+                    f"is not suitable at current market conditions.\n"
+                    f"DO NOT suggest opposite direction under any circumstances."
+                )
+                system_prompt = system_prompt + direction_instruction
+
             # Сериализуем данные с конвертацией dataclass → dict
             analysis_data = {
                 'symbol': symbol,
@@ -333,6 +354,10 @@ class AIRouter:
                 'btc_candles_1h': comprehensive_data.get('btc_candles_1h', [])[-100:],
                 'btc_candles_4h': comprehensive_data.get('btc_candles_4h', [])[-60:]
             }
+
+            # ✅ Добавляем forced_direction в данные для AI (если есть)
+            if forced_direction:
+                analysis_data['forced_direction'] = forced_direction
 
             data_json = json.dumps(analysis_data, separators=(',', ':'))
 

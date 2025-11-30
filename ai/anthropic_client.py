@@ -3,6 +3,9 @@ Anthropic Claude AI Client
 Файл: ai/anthropic_client.py
 
 Клиент для работы с Claude API (Stage 2 и Stage 3)
+
+ИСПРАВЛЕНО:
+- Добавлена поддержка forced_direction для ручного анализа
 """
 
 import asyncio
@@ -236,6 +239,30 @@ class AnthropicClient:
 
             # Загружаем промпт
             prompt_template = load_prompt_cached("prompt_analyze.txt")
+
+            # ✅ НОВОЕ: Проверяем forced_direction
+            forced_direction = comprehensive_data.get('forced_direction')
+
+            if forced_direction:
+                logger.info(
+                    f"Claude Stage 3 {symbol}: FORCED DIRECTION = {forced_direction}"
+                )
+
+                # Добавляем инструкцию в промпт
+                direction_instruction = (
+                    f"\n\n🎯 CRITICAL INSTRUCTION FOR THIS ANALYSIS:\n"
+                    f"User specifically requested {forced_direction} signal analysis.\n"
+                    f"You MUST analyze ONLY {forced_direction} opportunities.\n"
+                    f"If {forced_direction} setup is not viable based on technical analysis, "
+                    f"return NO_SIGNAL with detailed rejection_reason explaining why {forced_direction} "
+                    f"is not suitable at current market conditions.\n"
+                    f"DO NOT suggest opposite direction under any circumstances."
+                )
+                prompt_template = prompt_template + direction_instruction
+
+            # Добавляем forced_direction в данные (если есть)
+            if forced_direction:
+                comprehensive_data['forced_direction'] = forced_direction
 
             # JSON данных
             data_json = json.dumps(comprehensive_data, separators=(',', ':'))

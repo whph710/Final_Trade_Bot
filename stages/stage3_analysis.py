@@ -8,11 +8,12 @@ Stage 3: Comprehensive Analysis - FULL RESTORATION + SINGLE PAIR ANALYSIS
 - Volume Profile
 
 ДОБАВЛЕНО:
-- analyze_single_pair() для ручного анализа одной пары
+- analyze_single_pair() для ручного анализа одной пары с выбором направления
+- Поддержка forced_direction для AI
 """
 
 import logging
-from typing import List, Dict, Optional  # ✅ ИСПРАВЛЕНО: Добавили Optional
+from typing import List, Dict, Optional
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -179,7 +180,7 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 symbol=symbol,
                 symbol_candles=candles_1h,
                 btc_candles=btc_candles_1h,
-                signal_direction='UNKNOWN'  # Пока неизвестно
+                signal_direction='UNKNOWN'  # Пока неизвестно (автоматический анализ)
             )
 
             # ✅ ВОССТАНОВЛЕНО: Volume Profile
@@ -203,6 +204,7 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 'vp_analysis': vp_analysis,           # ✅ ВОССТАНОВЛЕНО
                 'btc_candles_1h': btc_candles_1h_raw,
                 'btc_candles_4h': btc_candles_4h_raw
+                # ⚠️ forced_direction НЕ добавляем - это автоматический анализ
             }
 
             logger.debug(
@@ -212,7 +214,7 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 f"volume_profile={'✓' if vp_data else '✗'}"
             )
 
-            # AI анализ с ПОЛНЫМИ данными
+            # AI анализ с ПОЛНЫМИ данными (БЕЗ forced_direction)
             analysis_result = await ai_router.analyze_pair_comprehensive(
                 symbol,
                 comprehensive_data
@@ -280,11 +282,11 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
 # ============================================================================
 
 async def analyze_single_pair(
-    symbol: str,
-    direction: str
+        symbol: str,
+        direction: str
 ) -> Optional[TradingSignal]:
     """
-    Анализ ОДНОЙ конкретной пары с заданным направлением
+    Анализ ОДНОЙ конкретной пары с заданным направлением (РУЧНОЙ АНАЛИЗ)
 
     Args:
         symbol: Торговая пара (например 'BTCUSDT')
@@ -298,7 +300,7 @@ async def analyze_single_pair(
     from ai.ai_router import AIRouter
     from config import config
 
-    logger.info(f"Single pair analysis: {symbol} {direction}")
+    logger.info(f"Manual analysis: {symbol} {direction}")
 
     try:
         # ===================================================================
@@ -434,7 +436,7 @@ async def analyze_single_pair(
         vp_analysis = analyze_volume_profile(vp_data, current_price) if vp_data else None
 
         # ===================================================================
-        # 7. COMPREHENSIVE DATA
+        # 7. COMPREHENSIVE DATA С FORCED_DIRECTION
         # ===================================================================
         comprehensive_data = {
             'symbol': symbol,
@@ -449,17 +451,17 @@ async def analyze_single_pair(
             'vp_analysis': vp_analysis,
             'btc_candles_1h': btc_candles_1h_raw,
             'btc_candles_4h': btc_candles_4h_raw,
-            'forced_direction': direction  # ✅ Подсказка для AI
+            'forced_direction': direction  # ✅ КРИТИЧЕСКИЙ ПАРАМЕТР для ручного анализа
         }
 
-        logger.debug(
-            f"{symbol} - Comprehensive data assembled (direction: {direction})"
+        logger.info(
+            f"{symbol} - Comprehensive data assembled with forced_direction={direction}"
         )
 
         # ===================================================================
-        # 8. AI АНАЛИЗ
+        # 8. AI АНАЛИЗ С FORCED_DIRECTION
         # ===================================================================
-        logger.info(f"{symbol} - Running AI analysis ({direction})")
+        logger.info(f"{symbol} - Running AI analysis (forced: {direction})")
 
         ai_router = AIRouter()
 
@@ -472,14 +474,16 @@ async def analyze_single_pair(
         confidence = analysis_result.get('confidence', 0)
 
         # ===================================================================
-        # 9. ПРОВЕРКА СООТВЕТСТВИЯ НАПРАВЛЕНИЮ
+        # 9. ПРОВЕРКА РЕЗУЛЬТАТА
         # ===================================================================
 
-        # Если AI выдал сигнал, но он НЕ совпадает с выбранным направлением
+        # AI должен был вернуть либо запрошенное направление, либо NO_SIGNAL
+        # Если AI вернул ДРУГОЕ направление - это ошибка конфигурации
+
         if signal_type != 'NO_SIGNAL' and signal_type != direction:
-            logger.warning(
-                f"{symbol} - AI suggested {signal_type}, "
-                f"but user requested {direction} - OVERRIDE"
+            logger.error(
+                f"{symbol} - AI returned {signal_type} instead of {direction} or NO_SIGNAL. "
+                f"This should not happen with forced_direction."
             )
 
             return TradingSignal(
@@ -491,12 +495,11 @@ async def analyze_single_pair(
                 take_profit_levels=[0, 0, 0],
                 risk_reward_ratio=0,
                 analysis=(
-                    f'AI analysis suggested {signal_type}, '
-                    f'but you requested {direction}. '
-                    f'Market conditions do not support {direction} signal.'
+                    f'⚠️ AI configuration error: returned {signal_type} when {direction} was requested.\n\n'
+                    f'This indicates the forced_direction instruction was not properly processed by AI.'
                 ),
                 comprehensive_data={
-                    'rejection_reason': f'Direction mismatch: AI={signal_type}, User={direction}'
+                    'rejection_reason': f'AI error: returned {signal_type} instead of {direction}'
                 }
             )
 
@@ -518,7 +521,7 @@ async def analyze_single_pair(
             )
 
             logger.info(
-                f"{symbol} - APPROVED {signal_type} "
+                f"{symbol} - ✅ APPROVED {signal_type} "
                 f"(confidence: {confidence}%)"
             )
 
@@ -527,10 +530,10 @@ async def analyze_single_pair(
         else:
             rejection_reason = analysis_result.get(
                 'rejection_reason',
-                f'{direction} signal not found'
+                f'Market conditions do not support {direction} signal'
             )
 
-            logger.info(f"{symbol} - REJECTED: {rejection_reason}")
+            logger.info(f"{symbol} - ❌ NO {direction} SIGNAL: {rejection_reason}")
 
             return TradingSignal(
                 symbol=symbol,
@@ -540,7 +543,7 @@ async def analyze_single_pair(
                 stop_loss=0,
                 take_profit_levels=[0, 0, 0],
                 risk_reward_ratio=0,
-                analysis=rejection_reason,
+                analysis=f"❌ {direction} signal not found.\n\n{rejection_reason}",
                 comprehensive_data={'rejection_reason': rejection_reason}
             )
 
@@ -555,7 +558,7 @@ async def analyze_single_pair(
             stop_loss=0,
             take_profit_levels=[0, 0, 0],
             risk_reward_ratio=0,
-            analysis=f'Analysis error: {str(e)[:100]}',
+            analysis=f'❌ Analysis error: {str(e)[:100]}',
             comprehensive_data={'rejection_reason': f'Exception: {str(e)[:100]}'}
         )
 

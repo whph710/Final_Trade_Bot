@@ -3,12 +3,24 @@ SWING TRADING ANALYSIS — TRIPLE EMA STRATEGY
 ЦЕЛЬ: Найти tradeable swing entries (hold 4-72ч) используя Triple EMA.
 R/R минимум = 1.5:1
 
+⚠️ IMPORTANT — FORCED DIRECTION HANDLING:
+- If input data contains 'forced_direction' field (LONG or SHORT):
+  * This is MANUAL ANALYSIS request from user
+  * You MUST analyze ONLY the requested direction
+  * DO NOT suggest opposite direction under any circumstances
+  * If requested direction is not viable → return NO_SIGNAL with detailed rejection_reason
+- If 'forced_direction' is NOT present or null:
+  * This is AUTOMATIC ANALYSIS from full pipeline
+  * Analyze both directions and choose the best setup
+  * Return LONG, SHORT, or NO_SIGNAL based on technical merit
+
 ДОСТУПНЫЕ ДАННЫЕ:
 - candles_1h, candles_4h
 - indicators_1h/4h (ema9/21/50, rsi, macd, volume_ratio)
 - market_data (funding, OI, orderbook)
 - correlation_data (BTC correlation)
 - volume_profile (POC, HVN, Value Area)
+- forced_direction (LONG/SHORT/null) — manual analysis flag
 
 ЛОГИКА:
 1. CHECK 4H TREND (EMA alignment)
@@ -19,21 +31,40 @@ R/R минимум = 1.5:1
 6. STOP LOSS (EMA21 на 4H, макс 5%)
 7. TAKE PROFIT (TP1 = 1.5R, TP2 = 2.5R, TP3 = 4R)
 
-REJECT ТОЛЬКО ЕСЛИ:
+REJECT ONLY IF:
 - RSI exhaustion (>85 LONG, <15 SHORT)
 - Dead market (volume <0.8)
 - Whipsaw zone (3+ crosses за 10 свечей)
 - Flat EMA (slope <0.5%)
 - Spread >0.20%
 - R/R <1.5:1
+- forced_direction specified but conditions don't support it
 
-OUTPUT:
+REJECTION REASON GUIDELINES:
+When returning NO_SIGNAL, always provide clear rejection_reason:
+- For MANUAL analysis (forced_direction present):
+  * Explain why SPECIFICALLY the requested direction is not viable
+  * Reference concrete technical indicators (EMA alignment, RSI, trend)
+  * Example: "SHORT not viable: 4H shows strong bullish alignment (EMA9 > EMA21 > EMA50), RSI at 68 indicates strength, no bearish setup present"
+- For AUTOMATIC analysis:
+  * Explain why NEITHER direction provides good setup
+  * Example: "No clear trend: EMA compression, RSI neutral at 52, low volume 0.75x"
+
+OUTPUT FORMAT:
 {
   "signal": "LONG"|"SHORT"|"NO_SIGNAL",
-  "confidence": int (min 60),
-  "entry_price": float,
-  "stop_loss": float,
-  "take_profit_levels": [tp1, tp2, tp3],
-  "analysis": "Detailed reasoning",
-  "rejection_reason": "string or null"
+  "confidence": int (60-100, only if signal found),
+  "entry_price": float (0 if NO_SIGNAL),
+  "stop_loss": float (0 if NO_SIGNAL),
+  "take_profit_levels": [tp1, tp2, tp3] (must be array of 3 floats, [0,0,0] if NO_SIGNAL),
+  "analysis": "Detailed technical reasoning for the signal or rejection",
+  "rejection_reason": "Clear explanation if NO_SIGNAL, null if signal found"
 }
+
+CRITICAL RULES:
+1. If forced_direction="LONG" → ONLY analyze LONG, return NO_SIGNAL if not viable
+2. If forced_direction="SHORT" → ONLY analyze SHORT, return NO_SIGNAL if not viable
+3. If forced_direction=null → analyze both, return best setup or NO_SIGNAL
+4. Always provide detailed rejection_reason when returning NO_SIGNAL
+5. take_profit_levels MUST be array of exactly 3 numbers (never null, never string)
+6. Never suggest opposite direction when forced_direction is specified
