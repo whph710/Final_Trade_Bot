@@ -1,13 +1,13 @@
 """
-Correlation Analysis Indicator
+BTC Correlation Indicator
 Файл: indicators/correlation.py
 
-Модуль для анализа корреляции с BTC и определения аномалий
+Анализ корреляции с BTC и детекция аномалий (decoupling)
 """
 
 import numpy as np
 import logging
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ class BTCCorrelationAnalysis:
         correlation: Коэффициент корреляции Пирсона (-1 до 1)
         correlation_strength: 'STRONG' | 'MODERATE' | 'WEAK'
         is_correlated: Значимая корреляция (>0.5)
-        should_block: Блокировать ли сигнал
+        should_block: Блокировать ли сигнал (только при >0.85)
         confidence_adjustment: Корректировка confidence
         reasoning: Текстовое описание
     """
@@ -95,10 +95,9 @@ def calculate_correlation(
 
 def analyze_btc_correlation(
         symbol: str,
-        symbol_prices: List[float],
-        btc_prices: List[float],
+        symbol_candles,  # NormalizedCandles
+        btc_candles,     # NormalizedCandles
         signal_direction: str,
-        btc_trend: str,
         window: int = 24
 ) -> BTCCorrelationAnalysis:
     """
@@ -106,16 +105,25 @@ def analyze_btc_correlation(
 
     Args:
         symbol: Символ актива
-        symbol_prices: Цены актива
-        btc_prices: Цены BTC
+        symbol_candles: NormalizedCandles актива
+        btc_candles: NormalizedCandles BTC
         signal_direction: 'LONG' | 'SHORT'
-        btc_trend: 'UP' | 'DOWN' | 'FLAT'
         window: Окно корреляции
 
     Returns:
         BTCCorrelationAnalysis
     """
-    if len(symbol_prices) < window or len(btc_prices) < window:
+    if not symbol_candles or not btc_candles:
+        return BTCCorrelationAnalysis(
+            correlation=0.0,
+            correlation_strength='UNKNOWN',
+            is_correlated=False,
+            should_block=False,
+            confidence_adjustment=0,
+            reasoning='Missing candles data'
+        )
+
+    if len(symbol_candles.closes) < window or len(btc_candles.closes) < window:
         return BTCCorrelationAnalysis(
             correlation=0.0,
             correlation_strength='UNKNOWN',
@@ -127,8 +135,8 @@ def analyze_btc_correlation(
 
     # Рассчитываем корреляцию
     corr = calculate_correlation(
-        np.array(symbol_prices),
-        np.array(btc_prices),
+        symbol_candles.closes,
+        btc_candles.closes,
         window
     )
 
@@ -145,7 +153,10 @@ def analyze_btc_correlation(
         strength = 'WEAK'
         is_correlated = False
 
-    # Проверяем alignment с BTC трендом
+    # Определяем BTC тренд
+    btc_trend = _determine_btc_trend(btc_candles.closes)
+
+    # Проверяем alignment
     should_block = False
     adjustment = 0
 
@@ -173,12 +184,9 @@ def analyze_btc_correlation(
             else:
                 adjustment = -12
                 reasoning = f'{signal_direction} misaligned with negative BTC correlation WARNING'
-
-    elif abs_corr > 0.5:  # Умеренная корреляция
-        reasoning = f'Moderate correlation {corr:.2f}, monitoring'
-
-    else:  # Слабая корреляция
-        reasoning = f'Weak BTC correlation {corr:.2f}'
+    else:
+        # Умеренная/слабая корреляция
+        reasoning = f'{strength} BTC correlation {corr:.2f}'
 
     return BTCCorrelationAnalysis(
         correlation=round(corr, 3),
@@ -265,7 +273,7 @@ def detect_correlation_anomaly(
     )
 
 
-def calculate_price_change(prices: List[float], window: int = 24) -> float:
+def calculate_price_change(prices: np.ndarray, window: int = 24) -> float:
     """Рассчитать изменение цены в процентах"""
     if len(prices) < window:
         window = len(prices)
@@ -286,7 +294,7 @@ def calculate_price_change(prices: List[float], window: int = 24) -> float:
         return 0.0
 
 
-def determine_btc_trend(btc_prices: List[float], window: int = 20) -> str:
+def _determine_btc_trend(btc_prices: np.ndarray, window: int = 20) -> str:
     """
     Определить тренд BTC
 
@@ -317,9 +325,84 @@ def determine_btc_trend(btc_prices: List[float], window: int = 20) -> str:
         return 'FLAT'
 
 
-def extract_closes_from_candles(candles: List[List]) -> List[float]:
-    """Извлечь closes из raw candles"""
-    try:
-        return [float(candle[4]) for candle in candles]
-    except (IndexError, ValueError, TypeError):
-        return []
+def get_comprehensive_correlation_analysis(
+        symbol: str,
+        symbol_candles,
+        btc_candles,
+        signal_direction: str
+) -> Dict:
+    """
+    Comprehensive correlation analysis
+
+    Args:
+        symbol: Торговая пара
+        symbol_candles: NormalizedCandles актива
+        btc_candles: NormalizedCandles BTC
+        signal_direction: 'LONG' | 'SHORT'
+
+    Returns:
+        {
+            'btc_correlation': BTCCorrelationAnalysis,
+            'correlation_anomaly': CorrelationAnomalyAnalysis,
+            'total_confidence_adjustment': int,
+            'should_block_signal': bool
+        }
+    """
+    if not symbol_candles or not btc_candles:
+        return {
+            'btc_correlation': BTCCorrelationAnalysis(
+                correlation=0.0,
+                correlation_strength='UNKNOWN',
+                is_correlated=False,
+                should_block=False,
+                confidence_adjustment=0,
+                reasoning='Missing data'
+            ),
+            'correlation_anomaly': CorrelationAnomalyAnalysis(
+                anomaly_detected=False,
+                anomaly_type='NONE',
+                expected_direction='NEUTRAL',
+                confidence_adjustment=0,
+                reasoning='Missing data'
+            ),
+            'total_confidence_adjustment': 0,
+            'should_block_signal': False
+        }
+
+    # 1. BTC Correlation Analysis
+    btc_corr_analysis = analyze_btc_correlation(
+        symbol,
+        symbol_candles,
+        btc_candles,
+        signal_direction
+    )
+
+    # 2. Price Changes
+    symbol_change_1h = calculate_price_change(symbol_candles.closes, window=1)
+    btc_change_1h = calculate_price_change(btc_candles.closes, window=1)
+
+    # 3. Anomaly Detection
+    anomaly_analysis = detect_correlation_anomaly(
+        symbol,
+        symbol_change_1h,
+        btc_change_1h,
+        btc_corr_analysis.correlation
+    )
+
+    # 4. Total Adjustment
+    total_adjustment = (
+        btc_corr_analysis.confidence_adjustment +
+        anomaly_analysis.confidence_adjustment
+    )
+
+    return {
+        'btc_correlation': btc_corr_analysis,
+        'correlation_anomaly': anomaly_analysis,
+        'total_confidence_adjustment': total_adjustment,
+        'should_block_signal': btc_corr_analysis.should_block,
+        'price_changes': {
+            'symbol_1h': symbol_change_1h,
+            'btc_1h': btc_change_1h
+        },
+        'btc_trend': _determine_btc_trend(btc_candles.closes)
+    }
