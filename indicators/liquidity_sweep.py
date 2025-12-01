@@ -1,9 +1,10 @@
 """
-Liquidity Sweep Indicator - FIXED VERSION
+Liquidity Sweep Indicator - FIXED THRESHOLD
 Файл: indicators/liquidity_sweep.py
 
 ИСПРАВЛЕНО:
-✅ #10: sweep_threshold_pct увеличен с 0.3% до 0.8%
+✅ sweep_threshold_pct: 0.8% → 1.5% (более реалистичный диапазон)
+✅ Минимальный порог: 0.2% → 0.3% (фильтр шума)
 """
 
 import numpy as np
@@ -29,14 +30,17 @@ class LiquiditySweepData:
 def detect_liquidity_sweep(
         candles,
         lookback: int = 20,
-        sweep_threshold_pct: float = 0.8,  # ✅ ИСПРАВЛЕНО: Было 0.3, стало 0.8
+        sweep_threshold_pct: float = 1.5,  # ✅ ИСПРАВЛЕНО: было 0.8, стало 1.5
+        min_sweep_pct: float = 0.3,         # ✅ НОВОЕ: минимальный порог
         reversal_bars: int = 3
 ) -> Optional[LiquiditySweepData]:
     """
-    ✅ ИСПРАВЛЕНО: Детекция liquidity sweep с увеличенным порогом
+    Детекция liquidity sweep
 
     Args:
-        sweep_threshold_pct: Максимальный размер пробоя (%) - увеличен до 0.8%
+        sweep_threshold_pct: Максимальный размер пробоя (1.5% - realistic)
+        min_sweep_pct: Минимальный порог (0.3% - filter noise)
+        reversal_bars: Окно проверки разворота (3 свечи)
     """
     if not candles or not candles.is_valid:
         return None
@@ -56,10 +60,8 @@ def detect_liquidity_sweep(
         check_closes = candles.closes[-reversal_bars:]
         check_volumes = candles.volumes[-reversal_bars:]
 
-        current_close = float(candles.closes[-1])
-
         # ============================================================
-        # Проверка sweep high (для медвежьего разворота)
+        # SWEEP HIGH (Bearish reversal)
         # ============================================================
         for i in range(len(check_highs) - 1):
             high = float(check_highs[i])
@@ -67,8 +69,8 @@ def detect_liquidity_sweep(
             if high > swing_high:
                 sweep_pct = ((high - swing_high) / swing_high) * 100
 
-                # ✅ ИСПРАВЛЕНО: Диапазон 0.2% - 0.8% (более консервативный)
-                if 0.2 <= sweep_pct <= sweep_threshold_pct:
+                # ✅ ИСПРАВЛЕНО: Реалистичный диапазон 0.3% - 1.5%
+                if min_sweep_pct <= sweep_pct <= sweep_threshold_pct:
                     reversal_check = _check_reversal(
                         check_closes[i:],
                         check_volumes[i:],
@@ -78,8 +80,7 @@ def detect_liquidity_sweep(
 
                     if reversal_check['confirmed']:
                         logger.info(
-                            f"Liquidity Sweep HIGH detected: "
-                            f"swept ${swing_high:.4f} by {sweep_pct:.2f}%, "
+                            f"Liquidity Sweep HIGH: swept ${swing_high:.4f} by {sweep_pct:.2f}%, "
                             f"reversal {reversal_check['reversion_pct']:.1f}%"
                         )
 
@@ -90,14 +91,11 @@ def detect_liquidity_sweep(
                             reversal_confirmed=True,
                             reversal_strength=reversal_check['strength'],
                             volume_confirmation=reversal_check['volume_spike'],
-                            details=(
-                                f"High swept at ${swing_high:.4f}, "
-                                f"reverted {reversal_check['reversion_pct']:.1f}%"
-                            )
+                            details=f"High swept at ${swing_high:.4f}, reverted {reversal_check['reversion_pct']:.1f}%"
                         )
 
         # ============================================================
-        # Проверка sweep low (для бычьего разворота)
+        # SWEEP LOW (Bullish reversal)
         # ============================================================
         for i in range(len(check_lows) - 1):
             low = float(check_lows[i])
@@ -105,8 +103,8 @@ def detect_liquidity_sweep(
             if low < swing_low:
                 sweep_pct = ((swing_low - low) / swing_low) * 100
 
-                # ✅ ИСПРАВЛЕНО: Диапазон 0.2% - 0.8%
-                if 0.2 <= sweep_pct <= sweep_threshold_pct:
+                # ✅ ИСПРАВЛЕНО: Реалистичный диапазон 0.3% - 1.5%
+                if min_sweep_pct <= sweep_pct <= sweep_threshold_pct:
                     reversal_check = _check_reversal(
                         check_closes[i:],
                         check_volumes[i:],
@@ -116,8 +114,7 @@ def detect_liquidity_sweep(
 
                     if reversal_check['confirmed']:
                         logger.info(
-                            f"Liquidity Sweep LOW detected: "
-                            f"swept ${swing_low:.4f} by {sweep_pct:.2f}%, "
+                            f"Liquidity Sweep LOW: swept ${swing_low:.4f} by {sweep_pct:.2f}%, "
                             f"reversal {reversal_check['reversion_pct']:.1f}%"
                         )
 
@@ -128,10 +125,7 @@ def detect_liquidity_sweep(
                             reversal_confirmed=True,
                             reversal_strength=reversal_check['strength'],
                             volume_confirmation=reversal_check['volume_spike'],
-                            details=(
-                                f"Low swept at ${swing_low:.4f}, "
-                                f"reverted {reversal_check['reversion_pct']:.1f}%"
-                            )
+                            details=f"Low swept at ${swing_low:.4f}, reverted {reversal_check['reversion_pct']:.1f}%"
                         )
 
         return None
@@ -168,11 +162,10 @@ def _check_reversal(
             reversion_pct = ((sweep_level - current_close) / sweep_level) * 100
             confirmed = current_close < sweep_level and reversion_pct > 0.5
 
-        # Проверка volume spike
+        # Volume spike check
         if len(volumes) >= 2:
             avg_volume = float(np.mean(volumes[:-1]))
             current_volume = float(volumes[-1])
-
             volume_spike = current_volume > avg_volume * 1.5
         else:
             volume_spike = False
@@ -195,10 +188,7 @@ def _check_reversal(
         }
 
 
-def analyze_liquidity_sweep(
-        candles,
-        signal_direction: str
-) -> dict:
+def analyze_liquidity_sweep(candles, signal_direction: str) -> dict:
     """Анализ liquidity sweep для текущего сигнала"""
     if not candles:
         return {
@@ -219,36 +209,23 @@ def analyze_liquidity_sweep(
                 'details': 'No recent liquidity sweep detected'
             }
 
-        # Проверяем соответствие направлению сигнала
+        # Проверяем соответствие направлению
         if signal_direction == 'LONG' and sweep_data.direction == 'SWEEP_LOW':
-            adjustment = 15
-
+            adjustment = 20
             if sweep_data.volume_confirmation:
                 adjustment += 5
-
-            details = (
-                f"✓ Bullish setup after liquidity sweep "
-                f"(strength: {sweep_data.reversal_strength:.0f})"
-            )
+            details = f"✓ Bullish setup after sweep (strength: {sweep_data.reversal_strength:.0f})"
 
         elif signal_direction == 'SHORT' and sweep_data.direction == 'SWEEP_HIGH':
-            adjustment = 15
-
+            adjustment = 20
             if sweep_data.volume_confirmation:
                 adjustment += 5
-
-            details = (
-                f"✓ Bearish setup after liquidity sweep "
-                f"(strength: {sweep_data.reversal_strength:.0f})"
-            )
+            details = f"✓ Bearish setup after sweep (strength: {sweep_data.reversal_strength:.0f})"
 
         else:
             # Sweep есть но не соответствует направлению
-            adjustment = -8
-            details = (
-                f"⚠ Liquidity sweep detected but direction mismatch "
-                f"({sweep_data.direction} vs {signal_direction})"
-            )
+            adjustment = -10
+            details = f"⚠ Sweep detected but direction mismatch ({sweep_data.direction} vs {signal_direction})"
 
         return {
             'sweep_detected': True,

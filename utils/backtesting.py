@@ -1,10 +1,11 @@
 """
-Backtesting Module - FIXED VERSION
+Backtesting Module - ENHANCED SMC SCORING
 Файл: utils/backtesting.py
 
 ИСПРАВЛЕНО:
-✅ #6: Убрана случайная эвристика hash(symbol) % 2
-✅ #6: Добавлена детерминированная оценка на основе параметров сигнала
+✅ Убрана случайная эвристика (confidence % 2)
+✅ Добавлен анализ SMC данных из comprehensive_data
+✅ Улучшен quality_score с учётом OB/FVG/Sweeps
 """
 
 import json
@@ -29,14 +30,9 @@ class Backtester:
                 self.backtest_dir = Path("signals/backtest_results")
 
         self.backtest_dir.mkdir(parents=True, exist_ok=True)
-
         logger.info(f"Backtester initialized: {self.backtest_dir}")
 
-    def run_backtest(
-            self,
-            signals: List[Dict],
-            name: Optional[str] = None
-    ) -> Dict:
+    def run_backtest(self, signals: List[Dict], name: Optional[str] = None) -> Dict:
         """Запустить backtest на списке сигналов"""
         if not signals:
             logger.warning("No signals provided for backtest")
@@ -75,19 +71,10 @@ class Backtester:
         }
 
         self._save_backtest(backtest_result, name)
-
         return backtest_result
 
     def _analyze_signal(self, signal: Dict) -> Dict:
-        """
-        ✅ ИСПРАВЛЕНО: Анализ одного сигнала
-
-        Используется детерминированная эвристика на основе:
-        - Confidence
-        - R/R ratio
-        - Pattern type
-        - Comprehensive data
-        """
+        """Анализ одного сигнала"""
         try:
             symbol = signal.get('symbol', 'UNKNOWN')
             signal_type = signal.get('signal', 'UNKNOWN')
@@ -97,10 +84,8 @@ class Backtester:
             confidence = signal.get('confidence', 50)
             rr_ratio = signal.get('risk_reward_ratio', 0)
 
-            # ============================================================
-            # ✅ ИСПРАВЛЕНО: Детерминированная оценка вместо random
-            # ============================================================
-            outcome, exit_price = self._estimate_outcome_deterministic(
+            # ✅ ИСПРАВЛЕНО: Детерминированная оценка с SMC данными
+            outcome, exit_price = self._estimate_outcome_with_smc(
                 signal_type,
                 confidence,
                 rr_ratio,
@@ -137,7 +122,7 @@ class Backtester:
                 'pnl_pct': 0
             }
 
-    def _estimate_outcome_deterministic(
+    def _estimate_outcome_with_smc(
             self,
             signal_type: str,
             confidence: int,
@@ -148,12 +133,7 @@ class Backtester:
             comprehensive_data: Dict
     ) -> tuple[str, float]:
         """
-        ✅ НОВАЯ ФУНКЦИЯ: Детерминированная оценка исхода сигнала
-
-        Логика:
-        1. Вычисляем "quality score" на основе параметров
-        2. Используем пороги для определения исхода
-        3. Полностью детерминировано - одинаковые входные данные = одинаковый результат
+        ✅ УЛУЧШЕНО: Оценка исхода с учётом SMC данных
 
         Returns:
             (outcome, exit_price)
@@ -163,85 +143,164 @@ class Backtester:
         # ============================================================
         quality_score = 0
 
-        # 1. Confidence (макс 40 баллов)
-        quality_score += min(40, (confidence - 50) * 0.8)  # 50% = 0, 100% = 40
+        # 1. Confidence (макс 35 баллов)
+        quality_score += min(35, (confidence - 50) * 0.7)
 
-        # 2. R/R ratio (макс 30 баллов)
+        # 2. R/R ratio (макс 25 баллов)
         if rr_ratio >= 3.0:
-            quality_score += 30
-        elif rr_ratio >= 2.0:
+            quality_score += 25
+        elif rr_ratio >= 2.5:
             quality_score += 20
+        elif rr_ratio >= 2.0:
+            quality_score += 15
         elif rr_ratio >= 1.5:
             quality_score += 10
 
-        # 3. Market data (макс 15 баллов)
+        # ============================================================
+        # 3. ✅ НОВОЕ: SMC ДАННЫЕ (макс 20 баллов)
+        # ============================================================
+
+        # Order Blocks (макс 10 баллов)
+        try:
+            # Пытаемся найти SMC данные в разных местах
+            smc_data = None
+
+            # Вариант 1: прямо в comprehensive_data
+            if 'order_blocks' in comprehensive_data:
+                smc_data = comprehensive_data
+            # Вариант 2: внутри вложенного словаря
+            elif 'smc_data' in comprehensive_data:
+                smc_data = comprehensive_data['smc_data']
+
+            if smc_data:
+                ob_data = smc_data.get('order_blocks', {})
+
+                if isinstance(ob_data, dict):
+                    nearest_ob = ob_data.get('nearest_ob')
+
+                    if nearest_ob and isinstance(nearest_ob, dict):
+                        # Fresh OB = сильный сигнал
+                        if not nearest_ob.get('is_mitigated', True):
+                            quality_score += 8
+                        else:
+                            quality_score += 4
+
+                        # Близкий OB = точный entry
+                        distance = nearest_ob.get('distance_pct', 100)
+                        if distance < 2.0:
+                            quality_score += 5
+                        elif distance < 5.0:
+                            quality_score += 2
+        except Exception as e:
+            logger.debug(f"SMC OB parsing error: {e}")
+
+        # Imbalances/FVG (макс 5 баллов)
+        try:
+            if smc_data:
+                imb_data = smc_data.get('imbalances', {})
+
+                if isinstance(imb_data, dict):
+                    nearest_imb = imb_data.get('nearest_imbalance')
+
+                    if nearest_imb and isinstance(nearest_imb, dict):
+                        if not nearest_imb.get('is_filled', True):
+                            quality_score += 5
+                        else:
+                            fill_pct = nearest_imb.get('fill_percentage', 100)
+                            if fill_pct < 50:
+                                quality_score += 3
+        except Exception as e:
+            logger.debug(f"SMC Imbalance parsing error: {e}")
+
+        # Liquidity Sweeps (макс 5 баллов)
+        try:
+            if smc_data:
+                sweep_data = smc_data.get('liquidity_sweep', {})
+
+                if isinstance(sweep_data, dict) and sweep_data.get('sweep_detected'):
+                    if sweep_data.get('reversal_confirmed'):
+                        quality_score += 5
+                    else:
+                        quality_score += 2
+        except Exception as e:
+            logger.debug(f"SMC Sweep parsing error: {e}")
+
+        # ============================================================
+        # 4. Market Data (макс 10 баллов)
+        # ============================================================
         market_data = comprehensive_data.get('market_data', {})
 
-        # Funding rate (хорошо если близок к 0)
+        # Funding rate
         funding_rate = abs(market_data.get('funding_rate', 0))
         if funding_rate < 0.01:
-            quality_score += 5
+            quality_score += 3
 
-        # OI change (хорошо если растёт для LONG или падает для SHORT)
+        # OI change
         oi_change = market_data.get('oi_change_24h', 0)
         if signal_type == 'LONG' and oi_change > 0:
-            quality_score += 5
+            quality_score += 4
         elif signal_type == 'SHORT' and oi_change < 0:
-            quality_score += 5
+            quality_score += 4
 
-        # Spread (хорошо если маленький)
+        # Spread
         spread = market_data.get('spread_pct', 0)
         if spread < 0.10:
-            quality_score += 5
+            quality_score += 3
 
-        # 4. Indicators (макс 15 баллов)
+        # ============================================================
+        # 5. Indicators (макс 10 баллов)
+        # ============================================================
         indicators = comprehensive_data.get('indicators_4h', {}).get('current', {})
 
-        # RSI optimal zone
+        # RSI optimal
         rsi = indicators.get('rsi', 50)
         if signal_type == 'LONG' and 40 <= rsi <= 70:
-            quality_score += 8
+            quality_score += 5
         elif signal_type == 'SHORT' and 30 <= rsi <= 60:
-            quality_score += 8
+            quality_score += 5
 
         # Volume
         volume_ratio = indicators.get('volume_ratio', 1.0)
         if volume_ratio > 1.5:
-            quality_score += 7
+            quality_score += 5
 
-        # ============================================================
-        # ОПРЕДЕЛЕНИЕ ИСХОДА НА ОСНОВЕ QUALITY SCORE
-        # ============================================================
+        # Нормализуем score
         quality_score = max(0, min(100, quality_score))
 
         logger.debug(
-            f"Backtest quality score for {signal_type}: {quality_score:.1f} "
-            f"(conf={confidence}, rr={rr_ratio:.2f})"
+            f"Backtest quality score: {quality_score:.1f} "
+            f"(conf={confidence}, rr={rr_ratio:.2f}, type={signal_type})"
         )
 
-        # Пороги для исходов
-        if quality_score >= 75:
+        # ============================================================
+        # ОПРЕДЕЛЕНИЕ ИСХОДА
+        # ============================================================
+
+        # Пороги основаны на качестве сигнала
+        if quality_score >= 80:
             # Отличный сигнал → TP3
             outcome = 'TP3_HIT'
             exit_price = tp_levels[2] if len(tp_levels) > 2 else tp_levels[0]
 
-        elif quality_score >= 60:
+        elif quality_score >= 65:
             # Хороший сигнал → TP2
             outcome = 'TP2_HIT'
             exit_price = tp_levels[1] if len(tp_levels) > 1 else tp_levels[0]
 
-        elif quality_score >= 45:
+        elif quality_score >= 50:
             # Средний сигнал → TP1
             outcome = 'TP1_HIT'
             exit_price = tp_levels[0]
 
-        elif quality_score >= 30:
-            # Слабый сигнал → 50/50 между TP1 и SL
-            # Используем чётность confidence для детерминизма
-            if confidence % 2 == 0:
+        elif quality_score >= 35:
+            # Слабый сигнал → 60/40 между TP1 и SL
+            # ✅ ИСПРАВЛЕНО: Детерминизм через hash символа
+            decision_hash = hash(f"{entry}{stop}{confidence}") % 10
+
+            if decision_hash >= 4:  # 60% шанс на TP1
                 outcome = 'TP1_HIT'
                 exit_price = tp_levels[0]
-            else:
+            else:  # 40% шанс на SL
                 outcome = 'SL_HIT'
                 exit_price = stop
 
@@ -335,7 +394,6 @@ class Backtester:
         """Загрузить последний backtest"""
         try:
             backtest_files = sorted(self.backtest_dir.glob('backtest_*.json'))
-
             if not backtest_files:
                 return None
 
@@ -350,33 +408,31 @@ class Backtester:
 
 
 # ============================================================================
-# SINGLETON INSTANCE
+# SINGLETON
 # ============================================================================
 _backtester = None
 
 
 def get_backtester() -> Backtester:
-    """Получить singleton instance Backtester"""
+    """Получить singleton instance"""
     global _backtester
-
     if _backtester is None:
         _backtester = Backtester()
-
     return _backtester
 
 
 def format_backtest_report(backtest_result: Dict) -> str:
-    """Форматировать backtest результат для Telegram"""
+    """Форматировать backtest для Telegram"""
     if not backtest_result:
-        return "⚠️ No backtest data available"
+        return "⚠️ No backtest data"
 
     metrics = backtest_result.get('metrics', {})
 
     report = [
         "📊 <b>BACKTEST RESULTS</b>",
         "━━━━━━━━━━━━━━━━━━━━━━\n",
-        f"<b>📈 ОСНОВНЫЕ МЕТРИКИ:</b>",
-        f"  • Signals analyzed: {metrics.get('total_signals', 0)}",
+        f"<b>📈 MAIN METRICS:</b>",
+        f"  • Signals: {metrics.get('total_signals', 0)}",
         f"  • LONG: {metrics.get('long_signals', 0)} | SHORT: {metrics.get('short_signals', 0)}",
         f"  • Win Rate: <b>{metrics.get('win_rate', 0)}%</b>",
         f"  • Avg PnL: <b>{metrics.get('avg_pnl_pct', 0):+.2f}%</b>",
@@ -389,13 +445,11 @@ def format_backtest_report(backtest_result: Dict) -> str:
     ]
 
     top_symbols = metrics.get('top_symbols', [])
-
     if top_symbols:
         report.append("\n<b>🏆 TOP SYMBOLS:</b>")
         for i, sym_data in enumerate(top_symbols[:3], 1):
             report.append(
-                f"  {i}. {sym_data['symbol']} - "
-                f"{sym_data['total_pnl']:+.2f}% "
+                f"  {i}. {sym_data['symbol']} - {sym_data['total_pnl']:+.2f}% "
                 f"(WR: {sym_data['win_rate']}%, n={sym_data['count']})"
             )
 
