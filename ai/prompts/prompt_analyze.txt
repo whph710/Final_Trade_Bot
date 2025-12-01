@@ -1,6 +1,6 @@
-SWING TRADING ANALYSIS — TRIPLE EMA STRATEGY
+SWING TRADING ANALYSIS — TRIPLE EMA + SMART MONEY CONCEPT STRATEGY
 
-ЦЕЛЬ: Найти tradeable swing entries (hold 4-72ч) используя Triple EMA.
+ЦЕЛЬ: Найти institutional-grade swing entries (hold 4-72ч) используя Triple EMA + SMC.
 R/R минимум = 1.5:1
 
 ⚠️ IMPORTANT — FORCED DIRECTION HANDLING:
@@ -15,56 +15,188 @@ R/R минимум = 1.5:1
   * Return LONG, SHORT, or NO_SIGNAL based on technical merit
 
 ДОСТУПНЫЕ ДАННЫЕ:
-- candles_1h, candles_4h
+- candles_1h, candles_4h (price action)
 - indicators_1h/4h (ema9/21/50, rsi, macd, volume_ratio)
-- market_data (funding, OI, orderbook)
-- correlation_data (BTC correlation)
-- volume_profile (POC, HVN, Value Area)
+- market_data (funding, OI, orderbook spread)
+- correlation_data (BTC correlation + alignment check)
+- volume_profile (POC, HVN/LVN, Value Area)
+- order_blocks (institutional accumulation zones)
+- imbalances (Fair Value Gaps)
+- liquidity_sweep (stop hunts detection)
 - forced_direction (LONG/SHORT/null) — manual analysis flag
 
-ЛОГИКА:
-1. CHECK 4H TREND (EMA alignment)
-2. CHECK 1H MOMENTUM (RSI, price vs EMA9)
-3. MARKET DATA (funding, OI, spread)
-4. BTC CORRELATION (корректирует confidence, не блокирует)
-5. VOLUME PROFILE (POC, HVN zones)
-6. STOP LOSS (EMA21 на 4H, макс 5%)
-7. TAKE PROFIT (TP1 = 1.5R, TP2 = 2.5R, TP3 = 4R)
+# ============================================================================
+# ANALYSIS LOGIC - PRIORITY ORDER
+# ============================================================================
 
-REJECT ONLY IF:
-- RSI exhaustion (>85 LONG, <15 SHORT)
-- Dead market (volume <0.8)
-- Whipsaw zone (3+ crosses за 10 свечей)
-- Flat EMA (slope <0.5%)
-- Spread >0.20%
-- R/R <1.5:1
-- forced_direction specified but conditions don't support it
+STEP 1: CHECK 4H TREND (EMA ALIGNMENT) — ANCHOR
+- Perfect Alignment: EMA9 > EMA21 > EMA50 (BULLISH) or reversed (BEARISH)
+- Minimum gap: 0.5% between EMAs
+- EMA slope agreement (all pointing same direction)
 
-REJECTION REASON GUIDELINES:
-When returning NO_SIGNAL, always provide clear rejection_reason:
-- For MANUAL analysis (forced_direction present):
-  * Explain why SPECIFICALLY the requested direction is not viable
-  * Reference concrete technical indicators (EMA alignment, RSI, trend)
-  * Example: "SHORT not viable: 4H shows strong bullish alignment (EMA9 > EMA21 > EMA50), RSI at 68 indicates strength, no bearish setup present"
-- For AUTOMATIC analysis:
-  * Explain why NEITHER direction provides good setup
-  * Example: "No clear trend: EMA compression, RSI neutral at 52, low volume 0.75x"
+STEP 2: SMART MONEY CONCEPT ANALYSIS
+- Order Blocks: Is price near fresh OB zone?
+  * Bullish OB = last down-candle before bullish impulse
+  * Bearish OB = last up-candle before bearish impulse
+  * Fresh (unmitigated) OB = strongest setup (+15 conf)
 
-OUTPUT FORMAT:
+- Imbalances (FVG): Are there unfilled gaps?
+  * Bullish FVG = gap where price jumped up
+  * Bearish FVG = gap where price jumped down
+  * Unfilled gaps act as price magnets (+8 conf)
+
+- Liquidity Sweep: Was there recent stop hunt?
+  * Sweep high → bearish reversal setup
+  * Sweep low → bullish reversal setup
+  * Sweep + OB nearby = STRONGEST SIGNAL (+20 conf)
+
+STEP 3: CHECK 1H MOMENTUM (ENTRY TIMING)
+- RSI in optimal zone (50-75 for LONG, 25-50 for SHORT)
+- Price action: pullback to EMA21 or compression breakout
+- Volume confirmation (ratio > 1.0, spike > 2.0 ideal)
+
+STEP 4: MARKET DATA VALIDATION
+- Funding Rate: <±0.01% optimal, >±0.02% caution
+- Open Interest: growing + price rising = healthy trend (+8 conf)
+- Orderbook Spread: <0.20% required (liquidity check)
+
+STEP 5: BTC CORRELATION (CONTEXT, NOT BLOCKER)
+- Correlation > 0.85: MUST align with BTC trend
+  * LONG + BTC UP = +8 conf
+  * LONG + BTC DOWN = -12 conf WARNING (but don't block)
+- Correlation < 0.5: independent, ignore BTC
+- Decoupling strength (moving stronger than expected): +10 conf
+
+STEP 6: VOLUME PROFILE CONFIRMATION
+- Price near POC (<1% distance): magnetic zone, high probability (+8 conf)
+- Price in Value Area: normal
+- Price > 3% outside Value Area: overextended, caution (-5 conf)
+- Price at HVN: strong support/resistance (+5 conf)
+- Price at LVN: fast-moving zone (-3 conf)
+
+# ============================================================================
+# REJECTION CRITERIA — HARD BLOCKS (NEVER TRADE)
+# ============================================================================
+
+1. **RSI EXHAUSTION**: RSI > 85 (LONG) or < 15 (SHORT)
+2. **DEAD VOLUME**: Volume ratio < 0.8 (no money in market)
+3. **WHIPSAW ZONE**: 3+ EMA crosses in 10 candles (unstable)
+4. **FLAT TREND**: EMA slope < 0.5% (no directional bias)
+5. **LOW LIQUIDITY**: Orderbook spread > 0.20%
+6. **BAD R/R**: Risk/Reward < 1.5:1
+7. **FORCED DIRECTION INVALID**: User requested LONG/SHORT but setup doesn't support it
+
+# ============================================================================
+# SOFT PENALTIES (REDUCE CONFIDENCE, DON'T REJECT)
+# ============================================================================
+
+- BTC misalignment (corr > 0.85, opposite direction): -12 conf
+- Single timeframe RSI exhaustion: -10 conf
+- OI declining while price rising: -10 conf
+- Price far from order blocks/imbalances: -8 conf
+
+# ============================================================================
+# ENTRY, STOP LOSS, TAKE PROFIT LOGIC
+# ============================================================================
+
+ENTRY PRICE:
+- Use current price OR nearest key level (OB, POC, EMA21)
+- For pullback setups: entry at EMA21 touch
+- For breakout setups: entry above/below compression zone
+
+STOP LOSS PLACEMENT (PRIORITY):
+1. Behind nearest Order Block (invalidation zone)
+2. Below/above liquidity sweep level
+3. EMA50 on 4H (trend anchor)
+4. 2x ATR distance (volatility-based)
+- MAXIMUM RISK: 5% from entry
+
+TAKE PROFIT LEVELS:
+- TP1 = 1.5R (quick profit, close 30-40% position)
+- TP2 = 2.5R (main target, close 40-50% position)
+- TP3 = 4.0R (extension target, trail remaining 10-20%)
+
+Alternative TP placement:
+- Next resistance/support level (from Volume Profile, OB zones)
+- Nearest unfilled imbalance (FVG target)
+- Previous swing high/low
+
+# ============================================================================
+# CONFIDENCE SCORING SYSTEM (60-100 SCALE)
+# ============================================================================
+
+START: Base confidence = 60
+
+ADDITIONS (+):
+✓ EMA perfect alignment (4H): +15
+✓ Fresh Order Block nearby: +15
+✓ Liquidity sweep confirmed: +15 (or +20 if sweep + OB combo)
+✓ Unfilled imbalance as target: +8
+✓ Volume spike (>2.0x): +15
+✓ BTC alignment (corr >0.85): +8
+✓ Price near POC (<1%): +8
+✓ RSI in optimal zone: +8
+
+SUBTRACTIONS (-):
+✗ BTC misalignment (corr >0.85): -12
+✗ Whipsaw zone: -12
+✗ RSI exhaustion (single TF): -10
+✗ Flat EMA: -10
+✗ Low volume: -10
+✗ OI declining: -10
+✗ Price overextended (>3% from VA): -5
+
+FINAL CONFIDENCE:
+- 80-100%: EXCELLENT setup (all stars aligned)
+- 70-79%: STRONG setup (good probability)
+- 60-69%: DECENT setup (minimum acceptable)
+- <60%: NO_SIGNAL (reject)
+
+# ============================================================================
+# OUTPUT FORMAT (JSON)
+# ============================================================================
+
 {
-  "signal": "LONG"|"SHORT"|"NO_SIGNAL",
-  "confidence": int (60-100, only if signal found),
+  "signal": "LONG" | "SHORT" | "NO_SIGNAL",
+  "confidence": 60-100 (only if signal found),
   "entry_price": float (0 if NO_SIGNAL),
   "stop_loss": float (0 if NO_SIGNAL),
-  "take_profit_levels": [tp1, tp2, tp3] (must be array of 3 floats, [0,0,0] if NO_SIGNAL),
-  "analysis": "Detailed technical reasoning for the signal or rejection",
+  "take_profit_levels": [tp1, tp2, tp3] (MUST be array of exactly 3 floats, [0,0,0] if NO_SIGNAL),
+  "analysis": "Detailed technical reasoning with SMC context",
   "rejection_reason": "Clear explanation if NO_SIGNAL, null if signal found"
 }
 
-CRITICAL RULES:
-1. If forced_direction="LONG" → ONLY analyze LONG, return NO_SIGNAL if not viable
-2. If forced_direction="SHORT" → ONLY analyze SHORT, return NO_SIGNAL if not viable
-3. If forced_direction=null → analyze both, return best setup or NO_SIGNAL
-4. Always provide detailed rejection_reason when returning NO_SIGNAL
-5. take_profit_levels MUST be array of exactly 3 numbers (never null, never string)
-6. Never suggest opposite direction when forced_direction is specified
+# ============================================================================
+# CRITICAL RULES
+# ============================================================================
+
+1. **FORCED DIRECTION**: If forced_direction="LONG" → ONLY analyze LONG, return NO_SIGNAL if not viable
+2. **FORCED DIRECTION**: If forced_direction="SHORT" → ONLY analyze SHORT, return NO_SIGNAL if not viable
+3. **AUTOMATIC MODE**: If forced_direction=null → analyze both, return best setup or NO_SIGNAL
+4. **REJECTION REASON**: Always provide detailed rejection_reason when returning NO_SIGNAL
+5. **TAKE PROFIT**: take_profit_levels MUST be array of exactly 3 numbers (never null, never string)
+6. **NO OPPOSITE**: Never suggest opposite direction when forced_direction is specified
+7. **SMC PRIORITY**: Order Blocks + Liquidity Sweeps are HIGHEST priority for entries
+8. **BTC CONTEXT**: BTC correlation adjusts confidence but doesn't block signals (except extreme cases)
+
+# ============================================================================
+# REJECTION REASON GUIDELINES
+# ============================================================================
+
+When returning NO_SIGNAL, provide clear rejection_reason:
+
+**For MANUAL analysis** (forced_direction present):
+  * Explain why SPECIFICALLY the requested direction is not viable
+  * Reference concrete technical indicators (EMA alignment, RSI, order blocks)
+  * Example: "LONG not viable: 4H bearish alignment (EMA9 < EMA21 < EMA50), no bullish order blocks present, RSI at 38 shows weakness"
+
+**For AUTOMATIC analysis**:
+  * Explain why NEITHER direction provides good setup
+  * Example: "No clear trend: EMAs compressed within 1%, RSI neutral at 52, low volume 0.75x, no SMC patterns detected"
+
+**Common rejection templates**:
+- "RSI exhaustion: RSI at 87 indicates overbought conditions, high risk of reversal"
+- "Dead market: Volume ratio 0.65x shows lack of institutional interest"
+- "Whipsaw zone: 4 EMA crosses in last 10 candles indicates unstable price action"
+- "No SMC setup: No fresh order blocks, imbalances filled, no liquidity sweeps detected"
+- "BTC misalignment: Strong BTC downtrend (-3.5%) conflicts with LONG setup (correlation 0.91)"
