@@ -1,9 +1,9 @@
-PROMPT A — SWING TRADING ANALYSIS — SMC ONLY (ENTRY ONLY FROM LEVELS | TAKE PROFIT ONLY FROM LEVELS)
+PROMPT A — SWING TRADING ANALYSIS — SMC ADAPTED FOR REAL MARKET
 
 GOAL
-Определить направление и сформировать сигнал, используя только SMC уровни. 
-ENTRY допускается ТОЛЬКО от уровней: Order Block, Imbalance (FVG), Liquidity level, Volume Profile levels (POC/HVN/LVN), ключевые swing levels.
-TP формируются ТОЛЬКО от уровней: Opposite OB, Imbalance targets, liquidity highs/lows, POC/Value Area, swing highs/lows.
+Определить направление торговли используя Smart Money Concept.
+⚠️ ВАЖНО: На реальном рынке ИДЕАЛЬНЫЕ условия встречаются редко.
+Ищи ХОРОШИЕ сетапы с подтверждением, а не только ИДЕАЛЬНЫЕ.
 
 INPUT
 {
@@ -13,48 +13,87 @@ INPUT
   order_blocks,
   imbalances,
   liquidity_sweep,
-  price_structure_4h,
+  ema_context (только для контекста, не критично),
   forced_direction
 }
 
-RULES — ENTRY (STRICT)
-Разрешённые точки входа:
-1) Граница Order Block (верх/низ зоны)
-2) Граница Imbalance (FVG) — верх/низ диапазона
-3) Уровень ликвидности (значимый high/low, sweep point)
+RULES — ENTRY (АДАПТИРОВАНО)
+✅ РАЗРЕШЁННЫЕ точки входа:
+1) Граница Order Block (верх/низ зоны) — ПРИОРИТЕТ если OB близко (<5%)
+2) Граница Imbalance (FVG) — если unfilled
+3) Уровень ликвидности (sweep point)
 4) Volume Profile уровни: POC, VAH, VAL, HVN/LVN
 5) Ключевые swing levels 1H/4H
+6) ✅ НОВОЕ: Текущая цена ДОПУСТИМА если:
+   - Есть FRESH Order Block в пределах 5%
+   - Есть подтверждение (volume spike ИЛИ sweep ИЛИ imbalance nearby)
+   - RSI не в extreme зоне (15-85)
 
-Нельзя входить от «текущей цены».  
-Нельзя входить от средних, индикаторов и т.п.  
-Если ни один уровень не подходит — NO_SIGNAL.
+⚠️ ГЛАВНОЕ: Entry должен иметь ЛОГИКУ и ПОДТВЕРЖДЕНИЕ.
+Не обязательно точно на уровне, но рядом с сильной SMC зоной.
 
-RULES — TAKE PROFIT (STRICT)
-Разрешённые TP уровни:
-1) ближний противоположный OB
-2) ближайший unfilled FVG
-3) значимый high/low (liquidity target)
-4) POC, VAH, VAL
-5) следующее HVN/LVN
+RULES — TAKE PROFIT (АДАПТИРОВАНО)
+✅ ПРИОРИТЕТ TP уровней:
+1) Ближний противоположный OB (если есть в пределах 3-8%)
+2) Ближайший unfilled FVG (если есть)
+3) POC, VAH, VAL (Volume Profile levels)
+4) Значимый swing high/low
 
-TP1, TP2, TP3 = только конкретные уровни.  
-Никаких R/R-основанных TP.
+⚠️ Если НЕТ чётких уровней в разумном диапазоне:
+- Используй R/R подход: TP1=1.5R, TP2=2.5R, TP3=4R от entry/stop
+- Это ДОПУСТИМО когда market structure не даёт чётких целей
+
+RULES — STOP LOSS
+Stop Loss ОБЯЗАН быть за зоной интереса:
+- За Order Block (invalidation point)
+- За swing low/high
+- Максимум: 2.5% от entry
 
 REJECTIONS
-- Нет валидного уровня для входа → NO_SIGNAL
-- Нет направленного SMC сетапа
-- forced_direction, но уровни против направления
-- RSI экстремальный
-- Низкий объём
-- Неверная позиция OB (например, bullish OB выше цены для LONG)
+- Нет SMC паттернов (OB ИЛИ FVG ИЛИ Sweep)
+- RSI extreme (>85 или <15)
+- Низкий объём (<0.8x)
+- forced_direction, но market structure против
+- Нет логики для entry (ни уровней, ни подтверждения)
+
+CRITICAL: Баланс между качеством и реальностью
+- PERFECT setup (OB + FVG + Sweep aligned) = 85-95% confidence
+- STRONG setup (OB + одно подтверждение) = 70-85% confidence
+- MODERATE setup (OB nearby + volume) = 60-70% confidence
+- Минимум для сигнала: 60% confidence
 
 OUTPUT (JSON)
 {
   "signal": "LONG" | "SHORT" | "NO_SIGNAL",
-  "confidence": 60–100,
-  "entry_price": "strict level only",
-  "stop_loss": "behind level",
-  "take_profit_levels": ["level1","level2","level3"],
-  "analysis": "SMC reasoning only",
-  "rejection_reason": null | "text"
+  "confidence": 60–95,
+  "entry_price": "число (может быть current price если логика есть)",
+  "stop_loss": "за зоной invalidation",
+  "take_profit_levels": ["уровень1","уровень2","уровень3"],
+  "analysis": "детальное объяснение логики setup",
+  "rejection_reason": null | "причина если NO_SIGNAL"
 }
+
+EXAMPLES:
+
+Example 1: PERFECT SETUP (OB + Sweep + FVG)
+"Bullish OB at $44,200 (2% below), Sweep Low confirmed at $44,150,
+unfilled FVG above at $45,500. ENTRY: $44,300 (near OB),
+STOP: $44,000 (behind sweep), TP1: $45,500 (FVG), TP2: $46,800 (VAH),
+TP3: $48,000 (swing high). Confidence: 92%"
+
+Example 2: STRONG SETUP (Fresh OB + Volume)
+"Fresh Bearish OB at $67,500 (1.5% above), strong volume spike on rejection candle.
+NO sweep but price action clean. ENTRY: $67,200 (current price below OB),
+STOP: $68,000 (behind OB), TP1: $65,800 (1.5R), TP2: $64,500 (POC),
+TP3: $62,000 (swing low). Confidence: 78%"
+
+Example 3: MODERATE SETUP (Mitigated OB + Imbalance)
+"Mitigated Bullish OB at $28,900 (3% below), partially filled FVG above.
+Volume average but RSI oversold (32). ENTRY: $29,200 (near OB retest),
+STOP: $28,500 (behind OB), TP1: $30,500 (1.5R), TP2: $31,800 (FVG target),
+TP3: $33,000 (2.5R). Confidence: 65%"
+
+Example 4: NO_SIGNAL (no confirmation)
+"Bullish OB at $52,000 (8% away), no imbalances, no sweeps,
+volume weak (0.7x), RSI neutral. Market structure не даёт подтверждения.
+NO SIGNAL. rejection_reason: OB too far and no confirmation patterns"

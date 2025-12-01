@@ -78,7 +78,7 @@ For each pair you'll receive:
 
 OUTPUT FORMAT:
 {
-  "selected_pairs": ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+  "selected_pairs": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "SHIBUSDT"],
   "reasoning": "Brief explanation why these pairs were chosen (1-2 sentences per pair)"
 }
 
