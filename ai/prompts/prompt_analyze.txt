@@ -205,9 +205,9 @@ OUTPUT (JSON)
 {
   "signal": "LONG" | "SHORT" | "NO_SIGNAL",
   "confidence": 60–100,
-  "entry_price": "strict level only",
-  "stop_loss": "behind level",
-  "take_profit_levels": [level1,level2,level3](float),
+  "entry_price": *,
+  "stop_loss": *,
+  "take_profit_levels": [*,*,*](float),
   "analysis": "SMC reasoning only",
   "rejection_reason": null | "text"
 }
