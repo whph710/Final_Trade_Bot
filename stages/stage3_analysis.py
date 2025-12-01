@@ -1,15 +1,11 @@
 """
-Stage 3: Comprehensive Analysis - FULL RESTORATION + SINGLE PAIR ANALYSIS
+Stage 3: Comprehensive Analysis - FULL SMC INTEGRATION
 Файл: stages/stage3_analysis.py
 
-ВОССТАНОВЛЕНО:
-- Market Data (funding, OI, orderbook)
-- BTC Correlation
-- Volume Profile
-
-ДОБАВЛЕНО:
-- analyze_single_pair() для ручного анализа одной пары с выбором направления
-- Поддержка forced_direction для AI
+✅ ПОЛНАЯ ИНТЕГРАЦИЯ:
+- Order Blocks
+- Imbalances (FVG)
+- Liquidity Sweeps
 """
 
 import logging
@@ -22,21 +18,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TradingSignal:
-    """
-    Финальный торговый сигнал
-
-    Attributes:
-        symbol: Торговая пара
-        signal: 'LONG' | 'SHORT' | 'NO_SIGNAL'
-        confidence: Confidence score (0-100)
-        entry_price: Цена входа
-        stop_loss: Stop loss цена
-        take_profit_levels: [TP1, TP2, TP3]
-        risk_reward_ratio: R/R ratio
-        analysis: Текстовое описание анализа
-        comprehensive_data: Все данные использованные для анализа
-        timestamp: Timestamp создания сигнала
-    """
+    """Финальный торговый сигнал"""
     symbol: str
     signal: str
     confidence: int
@@ -57,13 +39,7 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
     """
     Stage 3: Comprehensive analysis для выбранных пар
 
-    ✅ ВОССТАНОВЛЕНО: FULL PIPELINE (Market Data, Correlation, Volume Profile)
-
-    Args:
-        selected_pairs: Список символов выбранных в Stage 2
-
-    Returns:
-        (approved_signals: List[TradingSignal], rejected_signals: List[Dict])
+    ✅ ПОЛНЫЙ PIPELINE: Market Data, Correlation, Volume Profile, SMC (OB, FVG, Sweeps)
     """
     from data_providers import fetch_candles, normalize_candles, get_market_snapshot
     from data_providers.bybit_client import get_session
@@ -79,7 +55,7 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
         f"(provider: {config.STAGE3_PROVIDER})"
     )
 
-    # ✅ ВОССТАНОВЛЕНО: Загрузка BTC свечей
+    # Загрузка BTC свечей для корреляции
     logger.debug("Stage 3: Loading BTC candles for correlation analysis")
 
     btc_candles_1h_raw = await fetch_candles(
@@ -98,7 +74,6 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
         logger.error("Stage 3: Failed to load BTC candles (critical)")
         return [], []
 
-    # Нормализация BTC
     btc_candles_1h = normalize_candles(
         btc_candles_1h_raw,
         symbol='BTCUSDT',
@@ -138,7 +113,6 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 })
                 continue
 
-            # Нормализация
             candles_1h = normalize_candles(
                 candles_1h_raw, symbol, config.TIMEFRAME_SHORT
             )
@@ -168,11 +142,15 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
 
             current_price = float(candles_1h.closes[-1])
 
-            # ✅ ВОССТАНОВЛЕНО: Market Data
-            logger.debug(f"Stage 3: {symbol} - Loading market data (funding, OI, orderbook)")
+            # ============================================================
+            # MARKET DATA
+            # ============================================================
+            logger.debug(f"Stage 3: {symbol} - Loading market data")
             market_data = await get_market_snapshot(symbol, session)
 
-            # ✅ ВОССТАНОВЛЕНО: BTC Correlation
+            # ============================================================
+            # BTC CORRELATION
+            # ============================================================
             logger.debug(f"Stage 3: {symbol} - Analyzing BTC correlation")
             from indicators import get_comprehensive_correlation_analysis
 
@@ -180,17 +158,58 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 symbol=symbol,
                 symbol_candles=candles_1h,
                 btc_candles=btc_candles_1h,
-                signal_direction='UNKNOWN'  # Пока неизвестно (автоматический анализ)
+                signal_direction='UNKNOWN'
             )
 
-            # ✅ ВОССТАНОВЛЕНО: Volume Profile
+            # ============================================================
+            # VOLUME PROFILE
+            # ============================================================
             logger.debug(f"Stage 3: {symbol} - Calculating Volume Profile")
             from indicators import calculate_volume_profile, analyze_volume_profile
 
             vp_data = calculate_volume_profile(candles_4h, num_bins=50)
             vp_analysis = analyze_volume_profile(vp_data, current_price) if vp_data else None
 
-            # Собираем comprehensive data
+            # ============================================================
+            # ✅ SMART MONEY CONCEPT: ORDER BLOCKS
+            # ============================================================
+            logger.debug(f"Stage 3: {symbol} - Detecting Order Blocks")
+            from indicators.order_blocks import analyze_order_blocks
+
+            ob_analysis = analyze_order_blocks(
+                candles_4h,
+                current_price,
+                signal_direction='UNKNOWN',  # Пока неизвестно
+                lookback=50
+            )
+
+            # ============================================================
+            # ✅ SMART MONEY CONCEPT: IMBALANCES (FVG)
+            # ============================================================
+            logger.debug(f"Stage 3: {symbol} - Detecting Imbalances")
+            from indicators.imbalance import analyze_imbalances
+
+            imbalance_analysis = analyze_imbalances(
+                candles_4h,
+                current_price,
+                signal_direction='UNKNOWN',
+                lookback=50
+            )
+
+            # ============================================================
+            # ✅ SMART MONEY CONCEPT: LIQUIDITY SWEEPS
+            # ============================================================
+            logger.debug(f"Stage 3: {symbol} - Detecting Liquidity Sweeps")
+            from indicators.liquidity_sweep import analyze_liquidity_sweep
+
+            sweep_analysis = analyze_liquidity_sweep(
+                candles_1h,
+                signal_direction='UNKNOWN'
+            )
+
+            # ============================================================
+            # СОБИРАЕМ COMPREHENSIVE DATA
+            # ============================================================
             comprehensive_data = {
                 'symbol': symbol,
                 'candles_1h': candles_1h_raw,
@@ -198,23 +217,28 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 'indicators_1h': indicators_1h,
                 'indicators_4h': indicators_4h,
                 'current_price': current_price,
-                'market_data': market_data,           # ✅ ВОССТАНОВЛЕНО
-                'correlation_data': correlation_data,  # ✅ ВОССТАНОВЛЕНО
-                'volume_profile': vp_data,            # ✅ ВОССТАНОВЛЕНО
-                'vp_analysis': vp_analysis,           # ✅ ВОССТАНОВЛЕНО
+                'market_data': market_data,
+                'correlation_data': correlation_data,
+                'volume_profile': vp_data,
+                'vp_analysis': vp_analysis,
+                'order_blocks': ob_analysis,      # ✅ ДОБАВЛЕНО
+                'imbalances': imbalance_analysis,  # ✅ ДОБАВЛЕНО
+                'liquidity_sweep': sweep_analysis, # ✅ ДОБАВЛЕНО
                 'btc_candles_1h': btc_candles_1h_raw,
                 'btc_candles_4h': btc_candles_4h_raw
-                # ⚠️ forced_direction НЕ добавляем - это автоматический анализ
             }
 
             logger.debug(
                 f"Stage 3: {symbol} - Comprehensive data assembled: "
                 f"market_data={'✓' if market_data else '✗'}, "
                 f"correlation={'✓' if correlation_data else '✗'}, "
-                f"volume_profile={'✓' if vp_data else '✗'}"
+                f"volume_profile={'✓' if vp_data else '✗'}, "
+                f"order_blocks={'✓' if ob_analysis else '✗'}, "
+                f"imbalances={'✓' if imbalance_analysis else '✗'}, "
+                f"liquidity_sweep={'✓' if sweep_analysis else '✗'}"
             )
 
-            # AI анализ с ПОЛНЫМИ данными (БЕЗ forced_direction)
+            # AI анализ с ПОЛНЫМИ данными
             analysis_result = await ai_router.analyze_pair_comprehensive(
                 symbol,
                 comprehensive_data
@@ -225,7 +249,6 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
 
             # Проверка результата
             if signal_type != 'NO_SIGNAL' and confidence >= config.MIN_CONFIDENCE:
-                # Создаём TradingSignal
                 trading_signal = TradingSignal(
                     symbol=symbol,
                     signal=signal_type,
@@ -277,23 +300,14 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
     return approved_signals, rejected_signals
 
 
-# ============================================================================
-# ✅ НОВАЯ ФУНКЦИЯ: Анализ одной пары с заданным направлением
-# ============================================================================
-
 async def analyze_single_pair(
         symbol: str,
         direction: str
 ) -> Optional[TradingSignal]:
     """
-    Анализ ОДНОЙ конкретной пары с заданным направлением (РУЧНОЙ АНАЛИЗ)
+    Анализ ОДНОЙ конкретной пары с заданным направлением
 
-    Args:
-        symbol: Торговая пара (например 'BTCUSDT')
-        direction: 'LONG' или 'SHORT'
-
-    Returns:
-        TradingSignal или None при ошибке
+    ✅ ВКЛЮЧАЕТ ВСЕ SMC компоненты
     """
     from data_providers import fetch_candles, normalize_candles, get_market_snapshot
     from data_providers.bybit_client import get_session
@@ -303,9 +317,7 @@ async def analyze_single_pair(
     logger.info(f"Manual analysis: {symbol} {direction}")
 
     try:
-        # ===================================================================
-        # 1. ЗАГРУЗКА BTC СВЕЧЕЙ (для корреляции)
-        # ===================================================================
+        # Загрузка BTC свечей
         logger.debug(f"Loading BTC candles for correlation")
 
         btc_candles_1h_raw = await fetch_candles(
@@ -324,7 +336,6 @@ async def analyze_single_pair(
             logger.error(f"Failed to load BTC candles")
             return None
 
-        # Нормализация BTC
         btc_candles_1h = normalize_candles(
             btc_candles_1h_raw,
             symbol='BTCUSDT',
@@ -341,28 +352,15 @@ async def analyze_single_pair(
             logger.error(f"BTC candles normalization failed")
             return None
 
-        # ===================================================================
-        # 2. ЗАГРУЗКА СВЕЧЕЙ ВЫБРАННОЙ ПАРЫ
-        # ===================================================================
+        # Загрузка свечей выбранной пары
         logger.info(f"Loading candles for {symbol}")
 
         candles_1h_raw, candles_4h_raw = await _load_candles(symbol)
 
         if not candles_1h_raw or not candles_4h_raw:
             logger.warning(f"Missing candles for {symbol}")
-            return TradingSignal(
-                symbol=symbol,
-                signal='NO_SIGNAL',
-                confidence=0,
-                entry_price=0,
-                stop_loss=0,
-                take_profit_levels=[0, 0, 0],
-                risk_reward_ratio=0,
-                analysis='Missing 1H/4H candles',
-                comprehensive_data={'rejection_reason': 'Missing candles'}
-            )
+            return _create_no_signal(symbol, 'Missing 1H/4H candles')
 
-        # Нормализация
         candles_1h = normalize_candles(
             candles_1h_raw, symbol, config.TIMEFRAME_SHORT
         )
@@ -371,51 +369,25 @@ async def analyze_single_pair(
         )
 
         if not candles_1h or not candles_4h:
-            return TradingSignal(
-                symbol=symbol,
-                signal='NO_SIGNAL',
-                confidence=0,
-                entry_price=0,
-                stop_loss=0,
-                take_profit_levels=[0, 0, 0],
-                risk_reward_ratio=0,
-                analysis='Candle validation failed',
-                comprehensive_data={'rejection_reason': 'Invalid candles'}
-            )
+            return _create_no_signal(symbol, 'Candle validation failed')
 
-        # ===================================================================
-        # 3. РАСЧЁТ ИНДИКАТОРОВ
-        # ===================================================================
+        # Расчёт индикаторов
         logger.debug(f"{symbol} - Calculating indicators")
 
         indicators_1h = _calculate_full_indicators(candles_1h)
         indicators_4h = _calculate_full_indicators(candles_4h)
 
         if not indicators_1h or not indicators_4h:
-            return TradingSignal(
-                symbol=symbol,
-                signal='NO_SIGNAL',
-                confidence=0,
-                entry_price=0,
-                stop_loss=0,
-                take_profit_levels=[0, 0, 0],
-                risk_reward_ratio=0,
-                analysis='Indicators calculation failed',
-                comprehensive_data={'rejection_reason': 'Indicators failed'}
-            )
+            return _create_no_signal(symbol, 'Indicators calculation failed')
 
         current_price = float(candles_1h.closes[-1])
 
-        # ===================================================================
-        # 4. MARKET DATA
-        # ===================================================================
+        # Market Data
         logger.debug(f"{symbol} - Loading market data")
         session = await get_session()
         market_data = await get_market_snapshot(symbol, session)
 
-        # ===================================================================
-        # 5. BTC CORRELATION
-        # ===================================================================
+        # BTC Correlation
         logger.debug(f"{symbol} - Analyzing BTC correlation")
         from indicators import get_comprehensive_correlation_analysis
 
@@ -423,21 +395,48 @@ async def analyze_single_pair(
             symbol=symbol,
             symbol_candles=candles_1h,
             btc_candles=btc_candles_1h,
-            signal_direction=direction  # ✅ Используем выбранное направление
+            signal_direction=direction
         )
 
-        # ===================================================================
-        # 6. VOLUME PROFILE
-        # ===================================================================
+        # Volume Profile
         logger.debug(f"{symbol} - Calculating Volume Profile")
         from indicators import calculate_volume_profile, analyze_volume_profile
 
         vp_data = calculate_volume_profile(candles_4h, num_bins=50)
         vp_analysis = analyze_volume_profile(vp_data, current_price) if vp_data else None
 
-        # ===================================================================
-        # 7. COMPREHENSIVE DATA С FORCED_DIRECTION
-        # ===================================================================
+        # ✅ SMC: Order Blocks
+        logger.debug(f"{symbol} - Detecting Order Blocks")
+        from indicators.order_blocks import analyze_order_blocks
+
+        ob_analysis = analyze_order_blocks(
+            candles_4h,
+            current_price,
+            signal_direction=direction,
+            lookback=50
+        )
+
+        # ✅ SMC: Imbalances
+        logger.debug(f"{symbol} - Detecting Imbalances")
+        from indicators.imbalance import analyze_imbalances
+
+        imbalance_analysis = analyze_imbalances(
+            candles_4h,
+            current_price,
+            signal_direction=direction,
+            lookback=50
+        )
+
+        # ✅ SMC: Liquidity Sweeps
+        logger.debug(f"{symbol} - Detecting Liquidity Sweeps")
+        from indicators.liquidity_sweep import analyze_liquidity_sweep
+
+        sweep_analysis = analyze_liquidity_sweep(
+            candles_1h,
+            signal_direction=direction
+        )
+
+        # Comprehensive data с forced_direction
         comprehensive_data = {
             'symbol': symbol,
             'candles_1h': candles_1h_raw,
@@ -449,18 +448,19 @@ async def analyze_single_pair(
             'correlation_data': correlation_data,
             'volume_profile': vp_data,
             'vp_analysis': vp_analysis,
+            'order_blocks': ob_analysis,
+            'imbalances': imbalance_analysis,
+            'liquidity_sweep': sweep_analysis,
             'btc_candles_1h': btc_candles_1h_raw,
             'btc_candles_4h': btc_candles_4h_raw,
-            'forced_direction': direction  # ✅ КРИТИЧЕСКИЙ ПАРАМЕТР для ручного анализа
+            'forced_direction': direction  # ✅ Критический параметр
         }
 
         logger.info(
             f"{symbol} - Comprehensive data assembled with forced_direction={direction}"
         )
 
-        # ===================================================================
-        # 8. AI АНАЛИЗ С FORCED_DIRECTION
-        # ===================================================================
+        # AI анализ
         logger.info(f"{symbol} - Running AI analysis (forced: {direction})")
 
         ai_router = AIRouter()
@@ -473,39 +473,15 @@ async def analyze_single_pair(
         signal_type = analysis_result.get('signal', 'NO_SIGNAL')
         confidence = analysis_result.get('confidence', 0)
 
-        # ===================================================================
-        # 9. ПРОВЕРКА РЕЗУЛЬТАТА
-        # ===================================================================
-
-        # AI должен был вернуть либо запрошенное направление, либо NO_SIGNAL
-        # Если AI вернул ДРУГОЕ направление - это ошибка конфигурации
-
+        # Проверка результата
         if signal_type != 'NO_SIGNAL' and signal_type != direction:
             logger.error(
-                f"{symbol} - AI returned {signal_type} instead of {direction} or NO_SIGNAL. "
-                f"This should not happen with forced_direction."
+                f"{symbol} - AI returned {signal_type} instead of {direction} or NO_SIGNAL"
             )
-
-            return TradingSignal(
-                symbol=symbol,
-                signal='NO_SIGNAL',
-                confidence=0,
-                entry_price=0,
-                stop_loss=0,
-                take_profit_levels=[0, 0, 0],
-                risk_reward_ratio=0,
-                analysis=(
-                    f'⚠️ AI configuration error: returned {signal_type} when {direction} was requested.\n\n'
-                    f'This indicates the forced_direction instruction was not properly processed by AI.'
-                ),
-                comprehensive_data={
-                    'rejection_reason': f'AI error: returned {signal_type} instead of {direction}'
-                }
+            return _create_no_signal(
+                symbol,
+                f'AI error: returned {signal_type} instead of {direction}'
             )
-
-        # ===================================================================
-        # 10. ФОРМИРОВАНИЕ РЕЗУЛЬТАТА
-        # ===================================================================
 
         if signal_type == direction and confidence >= config.MIN_CONFIDENCE:
             trading_signal = TradingSignal(
@@ -549,22 +525,11 @@ async def analyze_single_pair(
 
     except Exception as e:
         logger.error(f"Error analyzing {symbol}: {e}", exc_info=False)
-
-        return TradingSignal(
-            symbol=symbol,
-            signal='NO_SIGNAL',
-            confidence=0,
-            entry_price=0,
-            stop_loss=0,
-            take_profit_levels=[0, 0, 0],
-            risk_reward_ratio=0,
-            analysis=f'❌ Analysis error: {str(e)[:100]}',
-            comprehensive_data={'rejection_reason': f'Exception: {str(e)[:100]}'}
-        )
+        return _create_no_signal(symbol, f'Exception: {str(e)[:100]}')
 
 
 # ============================================================================
-# HELPER FUNCTIONS (без изменений)
+# HELPER FUNCTIONS
 # ============================================================================
 
 async def _load_candles(symbol: str) -> tuple:
@@ -582,21 +547,7 @@ async def _load_candles(symbol: str) -> tuple:
 
 
 def _calculate_full_indicators(candles) -> Dict:
-    """
-    Рассчитать полные индикаторы для Stage 3
-
-    Returns:
-        {
-            'current': {...},
-            'ema9_history': [...],
-            'ema21_history': [...],
-            'ema50_history': [...],
-            'rsi_history': [...],
-            'macd_line_history': [...],
-            'macd_histogram_history': [...],
-            'volume_ratio_history': [...]
-        }
-    """
+    """Рассчитать полные индикаторы для Stage 3"""
     from indicators.ema import calculate_ema
     from indicators.rsi import calculate_rsi
     from indicators.macd import calculate_macd
@@ -605,7 +556,6 @@ def _calculate_full_indicators(candles) -> Dict:
     from config import config
 
     try:
-        # Рассчитываем все индикаторы
         ema9 = calculate_ema(candles.closes, config.EMA_FAST)
         ema21 = calculate_ema(candles.closes, config.EMA_MEDIUM)
         ema50 = calculate_ema(candles.closes, config.EMA_SLOW)
@@ -613,7 +563,6 @@ def _calculate_full_indicators(candles) -> Dict:
         macd_data = calculate_macd(candles.closes)
         volume_ratios = calculate_volume_ratio(candles.volumes, config.VOLUME_WINDOW)
 
-        # Текущие значения
         current = {
             'price': float(candles.closes[-1]),
             'ema9': float(ema9[-1]),
@@ -626,7 +575,6 @@ def _calculate_full_indicators(candles) -> Dict:
             'atr': calculate_atr(candles, config.ATR_PERIOD)
         }
 
-        # История (последние 30 значений)
         history_length = config.FINAL_INDICATORS_HISTORY
 
         return {
@@ -661,3 +609,18 @@ def _calculate_rr_ratio(analysis_result: Dict) -> float:
         return round(reward / risk, 2)
 
     return 0.0
+
+
+def _create_no_signal(symbol: str, reason: str) -> TradingSignal:
+    """Helper для создания NO_SIGNAL"""
+    return TradingSignal(
+        symbol=symbol,
+        signal='NO_SIGNAL',
+        confidence=0,
+        entry_price=0,
+        stop_loss=0,
+        take_profit_levels=[0, 0, 0],
+        risk_reward_ratio=0,
+        analysis=f'❌ Analysis failed: {reason}',
+        comprehensive_data={'rejection_reason': reason}
+    )

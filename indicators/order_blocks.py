@@ -1,8 +1,8 @@
 """
-Order Blocks Indicator
+Order Blocks Indicator - FULL IMPLEMENTATION
 Файл: indicators/order_blocks.py
 
-Детекция Order Blocks (зоны накопления институциональных игроков)
+✅ ПОЛНАЯ РЕАЛИЗАЦИЯ алгоритма Smart Money Order Blocks
 """
 
 import numpy as np
@@ -15,23 +15,12 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class OrderBlockData:
-    """
-    Данные Order Block
-
-    Attributes:
-        price_low: Нижняя граница блока
-        price_high: Верхняя граница блока
-        candle_index: Индекс свечи (от начала массива)
-        direction: 'BULLISH' | 'BEARISH'
-        strength: Сила блока (0-100)
-        is_mitigated: Был ли уже протестирован ценой
-        distance_from_current: Расстояние от текущей цены в %
-    """
+    """Данные Order Block"""
     price_low: float
     price_high: float
     candle_index: int
-    direction: str
-    strength: float
+    direction: str  # 'BULLISH' | 'BEARISH'
+    strength: float  # 0-100
     is_mitigated: bool
     distance_from_current: float
 
@@ -48,27 +37,18 @@ class OrderBlockAnalysis:
 
 
 def find_order_blocks(
-        candles,  # NormalizedCandles
+        candles,
         lookback: int = 50,
         min_impulse_pct: float = 2.0,
         min_imbalance_bars: int = 2
 ) -> List[OrderBlockData]:
     """
-    Найти Order Blocks на графике
+    ✅ ПОЛНАЯ РЕАЛИЗАЦИЯ: Найти Order Blocks на графике
 
-    Логика:
-    1. Найти ChoCh (Change of Character) — слом структуры
-    2. Найти последнюю свечу перед импульсом
-    3. Эта свеча = Order Block (зона накопления крупного игрока)
-
-    Args:
-        candles: NormalizedCandles объект
-        lookback: Количество свечей для анализа
-        min_impulse_pct: Минимальное движение для импульса (%)
-        min_imbalance_bars: Минимум свечей в импульсе
-
-    Returns:
-        Список Order Blocks (от новых к старым)
+    Алгоритм:
+    1. Найти Swing Highs/Lows (локальные экстремумы)
+    2. Детектировать импульсные движения от swing points
+    3. Определить последнюю противоположную свечу перед импульсом = OB
     """
     if not candles or not candles.is_valid:
         return []
@@ -79,23 +59,30 @@ def find_order_blocks(
     try:
         order_blocks = []
 
-        # Анализируем последние lookback свечей
+        # Берём последние lookback свечей
         recent_highs = candles.highs[-lookback:]
         recent_lows = candles.lows[-lookback:]
         recent_closes = candles.closes[-lookback:]
         recent_opens = candles.opens[-lookback:]
 
-        # Определяем swing highs и swing lows
-        swing_highs = _find_swing_points(recent_highs, 'high')
-        swing_lows = _find_swing_points(recent_lows, 'low')
-
         current_price = float(candles.closes[-1])
 
-        # Ищем бычьи Order Blocks (перед движением вверх)
-        for i in range(len(swing_lows) - 1):
-            low_idx = swing_lows[i]
+        # ============================================================
+        # ШАГ 1: Найти Swing Highs и Swing Lows
+        # ============================================================
+        swing_highs = _find_swing_points(recent_highs, 'high', window=3)
+        swing_lows = _find_swing_points(recent_lows, 'low', window=3)
 
-            # Проверяем есть ли импульс после этого low
+        logger.debug(
+            f"Found {len(swing_highs)} swing highs, "
+            f"{len(swing_lows)} swing lows"
+        )
+
+        # ============================================================
+        # ШАГ 2: Поиск БЫЧЬИХ Order Blocks (перед движением вверх)
+        # ============================================================
+        for low_idx in swing_lows:
+            # Проверяем есть ли импульс ВВЕРХ после этого swing low
             impulse_detected, impulse_strength = _detect_impulse(
                 recent_closes,
                 recent_highs,
@@ -106,7 +93,7 @@ def find_order_blocks(
             )
 
             if impulse_detected:
-                # Order Block = последняя down-свеча перед импульсом
+                # Order Block = последняя DOWN-свеча перед импульсом
                 ob_idx = _find_ob_candle(
                     recent_opens,
                     recent_closes,
@@ -114,11 +101,11 @@ def find_order_blocks(
                     'BULLISH'
                 )
 
-                if ob_idx is not None and ob_idx >= 0:
-                    # Проверяем не был ли уже протестирован
+                if ob_idx is not None and 0 <= ob_idx < len(recent_lows):
                     ob_low = float(recent_lows[ob_idx])
                     ob_high = float(recent_highs[ob_idx])
 
+                    # Проверяем не был ли уже протестирован ценой
                     is_mitigated = _check_mitigation(
                         recent_lows,
                         recent_highs,
@@ -140,10 +127,10 @@ def find_order_blocks(
                         distance_from_current=round(distance, 2)
                     ))
 
-        # Ищем медвежьи Order Blocks (перед движением вниз)
-        for i in range(len(swing_highs) - 1):
-            high_idx = swing_highs[i]
-
+        # ============================================================
+        # ШАГ 3: Поиск МЕДВЕЖЬИХ Order Blocks (перед движением вниз)
+        # ============================================================
+        for high_idx in swing_highs:
             impulse_detected, impulse_strength = _detect_impulse(
                 recent_closes,
                 recent_lows,
@@ -161,7 +148,7 @@ def find_order_blocks(
                     'BEARISH'
                 )
 
-                if ob_idx is not None and ob_idx >= 0:
+                if ob_idx is not None and 0 <= ob_idx < len(recent_lows):
                     ob_low = float(recent_lows[ob_idx])
                     ob_high = float(recent_highs[ob_idx])
 
@@ -189,7 +176,7 @@ def find_order_blocks(
         # Сортируем по proximity к текущей цене
         order_blocks.sort(key=lambda x: x.distance_from_current)
 
-        logger.debug(f"Found {len(order_blocks)} order blocks")
+        logger.debug(f"Found {len(order_blocks)} total order blocks")
         return order_blocks
 
     except Exception as e:
@@ -197,23 +184,206 @@ def find_order_blocks(
         return []
 
 
+def _find_swing_points(
+        prices: np.ndarray,
+        point_type: str,
+        window: int = 3
+) -> List[int]:
+    """
+    Найти swing highs или swing lows
+
+    Swing High = локальный максимум (выше всех соседей в окне)
+    Swing Low = локальный минимум (ниже всех соседей в окне)
+    """
+    swings = []
+
+    for i in range(window, len(prices) - window):
+        if point_type == 'high':
+            # Swing High: выше всех слева и справа
+            left_condition = all(
+                prices[i] >= prices[i - j] for j in range(1, window + 1)
+            )
+            right_condition = all(
+                prices[i] >= prices[i + j] for j in range(1, window + 1)
+            )
+
+            if left_condition and right_condition:
+                swings.append(i)
+
+        else:  # 'low'
+            # Swing Low: ниже всех слева и справа
+            left_condition = all(
+                prices[i] <= prices[i - j] for j in range(1, window + 1)
+            )
+            right_condition = all(
+                prices[i] <= prices[i + j] for j in range(1, window + 1)
+            )
+
+            if left_condition and right_condition:
+                swings.append(i)
+
+    return swings
+
+
+def _detect_impulse(
+        closes: np.ndarray,
+        extremes: np.ndarray,  # highs для BULLISH, lows для BEARISH
+        start_idx: int,
+        direction: str,
+        min_pct: float,
+        min_bars: int
+) -> tuple[bool, float]:
+    """
+    Детекция импульсного движения
+
+    Критерии импульса:
+    - Движение >= min_pct за min_bars свечей
+    - Минимум 70% свечей движутся в направлении тренда
+    """
+    if start_idx + min_bars >= len(closes):
+        return False, 0.0
+
+    try:
+        start_price = float(closes[start_idx])
+
+        # Проверяем следующие min_bars свечей
+        window = extremes[start_idx:start_idx + min_bars + 1]
+
+        if direction == 'BULLISH':
+            max_price = float(np.max(window))
+            move_pct = ((max_price - start_price) / start_price) * 100
+
+            # Проверка чистоты движения
+            has_clean_move = _check_clean_impulse(
+                closes[start_idx:start_idx + min_bars + 1],
+                'BULLISH'
+            )
+
+        else:  # BEARISH
+            min_price = float(np.min(window))
+            move_pct = ((start_price - min_price) / start_price) * 100
+
+            has_clean_move = _check_clean_impulse(
+                closes[start_idx:start_idx + min_bars + 1],
+                'BEARISH'
+            )
+
+        # Импульс подтверждён если движение >= min_pct и чистое
+        if move_pct >= min_pct and has_clean_move:
+            # Strength зависит от размера движения
+            strength = min(100, (move_pct / min_pct) * 50)
+            return True, strength
+
+        return False, 0.0
+
+    except Exception as e:
+        logger.debug(f"Impulse detection error: {e}")
+        return False, 0.0
+
+
+def _check_clean_impulse(closes: np.ndarray, direction: str) -> bool:
+    """
+    Проверка что импульс чистый (минимальные откаты)
+
+    Требование: минимум 70% свечей движутся в направлении тренда
+    """
+    if len(closes) < 3:
+        return False
+
+    try:
+        if direction == 'BULLISH':
+            bullish_candles = sum(
+                1 for i in range(1, len(closes)) if closes[i] > closes[i - 1]
+            )
+            ratio = bullish_candles / (len(closes) - 1)
+        else:  # BEARISH
+            bearish_candles = sum(
+                1 for i in range(1, len(closes)) if closes[i] < closes[i - 1]
+            )
+            ratio = bearish_candles / (len(closes) - 1)
+
+        return ratio >= 0.7
+
+    except Exception:
+        return False
+
+
+def _find_ob_candle(
+        opens: np.ndarray,
+        closes: np.ndarray,
+        impulse_start: int,
+        direction: str
+) -> Optional[int]:
+    """
+    Найти последнюю свечу перед импульсом (Order Block свеча)
+
+    Для BULLISH: последняя DOWN-свеча (close < open)
+    Для BEARISH: последняя UP-свеча (close > open)
+    """
+    if impulse_start < 1:
+        return None
+
+    try:
+        # Ищем назад от точки импульса (максимум 5 свечей)
+        for i in range(impulse_start, max(0, impulse_start - 5), -1):
+            if direction == 'BULLISH':
+                # Последняя down-свеча
+                if closes[i] < opens[i]:
+                    return i
+            else:  # BEARISH
+                # Последняя up-свеча
+                if closes[i] > opens[i]:
+                    return i
+
+        # Если не нашли, возвращаем свечу перед импульсом
+        return impulse_start - 1
+
+    except Exception:
+        return None
+
+
+def _check_mitigation(
+        lows: np.ndarray,
+        highs: np.ndarray,
+        ob_idx: int,
+        ob_low: float,
+        ob_high: float,
+        direction: str
+) -> bool:
+    """
+    Проверка был ли Order Block протестирован (mitigated)
+
+    Mitigation = цена вернулась в зону OB
+    """
+    if ob_idx >= len(lows) - 1:
+        return False
+
+    try:
+        # Проверяем свечи ПОСЛЕ Order Block
+        for i in range(ob_idx + 1, len(lows)):
+            if direction == 'BULLISH':
+                # Цена вернулась в зону OB? (1% tolerance)
+                if lows[i] <= ob_high * 1.01:
+                    return True
+            else:  # BEARISH
+                # Цена вернулась в зону OB?
+                if highs[i] >= ob_low * 0.99:
+                    return True
+
+        return False
+
+    except Exception:
+        return False
+
+
 def analyze_order_blocks(
-        candles,  # NormalizedCandles
+        candles,
         current_price: float,
         signal_direction: str,
         lookback: int = 50
 ) -> Optional[OrderBlockAnalysis]:
     """
     Анализ Order Blocks относительно текущей цены и направления сигнала
-
-    Args:
-        candles: NormalizedCandles объект
-        current_price: Текущая цена
-        signal_direction: 'LONG' | 'SHORT'
-        lookback: Период анализа
-
-    Returns:
-        OrderBlockAnalysis или None
     """
     if not candles or current_price == 0:
         return None
@@ -244,24 +414,18 @@ def analyze_order_blocks(
                 if ob.direction == 'BEARISH' and ob.price_low > current_price
             ]
 
-        # Находим ближайший релевантный блок
+        # Находим ближайший релевантный блок (fresh приоритетнее)
         nearest_ob = None
         if relevant_blocks:
-            # Берём блок с минимальной дистанцией который ещё не был протестирован
             unmitigated = [ob for ob in relevant_blocks if not ob.is_mitigated]
 
             if unmitigated:
                 nearest_ob = unmitigated[0]
             else:
-                # Если все протестированы, берём ближайший
                 nearest_ob = relevant_blocks[0]
 
         # Рассчитываем confidence adjustment
-        adjustment = _calculate_ob_adjustment(
-            nearest_ob,
-            signal_direction,
-            current_price
-        )
+        adjustment = _calculate_ob_adjustment(nearest_ob, signal_direction)
 
         # Статистика
         bullish_count = sum(1 for ob in all_blocks if ob.direction == 'BULLISH')
@@ -295,160 +459,11 @@ def analyze_order_blocks(
         return None
 
 
-def _find_swing_points(prices: np.ndarray, point_type: str, window: int = 5) -> List[int]:
-    """Найти swing highs или swing lows"""
-    swings = []
-
-    for i in range(window, len(prices) - window):
-        if point_type == 'high':
-            # Swing high: выше всех соседей
-            if all(prices[i] >= prices[i - j] for j in range(1, window + 1)) and \
-                    all(prices[i] >= prices[i + j] for j in range(1, window + 1)):
-                swings.append(i)
-        else:  # low
-            # Swing low: ниже всех соседей
-            if all(prices[i] <= prices[i - j] for j in range(1, window + 1)) and \
-                    all(prices[i] <= prices[i + j] for j in range(1, window + 1)):
-                swings.append(i)
-
-    return swings
-
-
-def _detect_impulse(
-        closes: np.ndarray,
-        extremes: np.ndarray,  # highs для BULLISH, lows для BEARISH
-        start_idx: int,
-        direction: str,
-        min_pct: float,
-        min_bars: int
-) -> tuple[bool, float]:
-    """Детекция импульсного движения"""
-    if start_idx + min_bars >= len(closes):
-        return False, 0.0
-
-    try:
-        start_price = float(closes[start_idx])
-
-        # Проверяем следующие min_bars свечей
-        window = extremes[start_idx:start_idx + min_bars + 1]
-
-        if direction == 'BULLISH':
-            max_price = float(np.max(window))
-            move_pct = ((max_price - start_price) / start_price) * 100
-
-            # Проверка: минимальные откаты
-            has_clean_move = _check_clean_impulse(
-                closes[start_idx:start_idx + min_bars + 1],
-                'BULLISH'
-            )
-
-        else:  # BEARISH
-            min_price = float(np.min(window))
-            move_pct = ((start_price - min_price) / start_price) * 100
-
-            has_clean_move = _check_clean_impulse(
-                closes[start_idx:start_idx + min_bars + 1],
-                'BEARISH'
-            )
-
-        # Импульс подтверждён если движение >= min_pct и чистое
-        if move_pct >= min_pct and has_clean_move:
-            # Strength зависит от размера движения
-            strength = min(100, (move_pct / min_pct) * 50)
-            return True, strength
-
-        return False, 0.0
-
-    except Exception:
-        return False, 0.0
-
-
-def _check_clean_impulse(closes: np.ndarray, direction: str) -> bool:
-    """Проверка что импульс чистый (минимальные откаты)"""
-    if len(closes) < 3:
-        return False
-
-    try:
-        # Считаем количество свечей в направлении импульса
-        if direction == 'BULLISH':
-            bullish_candles = sum(1 for i in range(1, len(closes)) if closes[i] > closes[i - 1])
-            ratio = bullish_candles / (len(closes) - 1)
-        else:  # BEARISH
-            bearish_candles = sum(1 for i in range(1, len(closes)) if closes[i] < closes[i - 1])
-            ratio = bearish_candles / (len(closes) - 1)
-
-        # Минимум 70% свечей в направлении движения
-        return ratio >= 0.7
-
-    except Exception:
-        return False
-
-
-def _find_ob_candle(
-        opens: np.ndarray,
-        closes: np.ndarray,
-        impulse_start: int,
-        direction: str
-) -> Optional[int]:
-    """Найти последнюю свечу перед импульсом (OB свеча)"""
-    if impulse_start < 1:
-        return None
-
-    try:
-        # Ищем назад от точки импульса
-        for i in range(impulse_start, max(0, impulse_start - 5), -1):
-            if direction == 'BULLISH':
-                # Последняя down-свеча
-                if closes[i] < opens[i]:
-                    return i
-            else:  # BEARISH
-                # Последняя up-свеча
-                if closes[i] > opens[i]:
-                    return i
-
-        # Если не нашли, возвращаем свечу перед импульсом
-        return impulse_start - 1
-
-    except Exception:
-        return None
-
-
-def _check_mitigation(
-        lows: np.ndarray,
-        highs: np.ndarray,
-        ob_idx: int,
-        ob_low: float,
-        ob_high: float,
-        direction: str
-) -> bool:
-    """Проверка был ли Order Block протестирован (mitigated)"""
-    if ob_idx >= len(lows) - 1:
-        return False
-
-    try:
-        # Проверяем свечи ПОСЛЕ OB
-        for i in range(ob_idx + 1, len(lows)):
-            if direction == 'BULLISH':
-                # Цена вернулась в зону OB?
-                if lows[i] <= ob_high * 1.01:  # 1% tolerance
-                    return True
-            else:  # BEARISH
-                # Цена вернулась в зону OB?
-                if highs[i] >= ob_low * 0.99:  # 1% tolerance
-                    return True
-
-        return False
-
-    except Exception:
-        return False
-
-
 def _calculate_ob_adjustment(
         nearest_ob: Optional[OrderBlockData],
-        signal_direction: str,
-        current_price: float
+        signal_direction: str
 ) -> int:
-    """Рассчитать корректировку confidence на основе OB"""
+    """Рассчитать корректировку confidence на основе Order Block"""
     if not nearest_ob:
         return 0
 

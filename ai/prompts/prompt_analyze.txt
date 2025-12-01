@@ -1,4 +1,4 @@
-SWING TRADING ANALYSIS — TRIPLE EMA + SMART MONEY CONCEPT STRATEGY
+SWING TRADING ANALYSIS — TRIPLE EMA + SMART MONEY CONCEPT STRATEGY (ENHANCED)
 
 ЦЕЛЬ: Найти institutional-grade swing entries (hold 4-72ч) используя Triple EMA + SMC.
 R/R минимум = 1.5:1
@@ -20,13 +20,13 @@ R/R минимум = 1.5:1
 - market_data (funding, OI, orderbook spread)
 - correlation_data (BTC correlation + alignment check)
 - volume_profile (POC, HVN/LVN, Value Area)
-- order_blocks (institutional accumulation zones)
-- imbalances (Fair Value Gaps)
-- liquidity_sweep (stop hunts detection)
+- order_blocks (institutional accumulation zones) ✅ НОВОЕ
+- imbalances (Fair Value Gaps) ✅ НОВОЕ
+- liquidity_sweep (stop hunts detection) ✅ НОВОЕ
 - forced_direction (LONG/SHORT/null) — manual analysis flag
 
 # ============================================================================
-# ANALYSIS LOGIC - PRIORITY ORDER
+# ANALYSIS LOGIC - PRIORITY ORDER (ENHANCED WITH SMC)
 # ============================================================================
 
 STEP 1: CHECK 4H TREND (EMA ALIGNMENT) — ANCHOR
@@ -34,21 +34,63 @@ STEP 1: CHECK 4H TREND (EMA ALIGNMENT) — ANCHOR
 - Minimum gap: 0.5% between EMAs
 - EMA slope agreement (all pointing same direction)
 
-STEP 2: SMART MONEY CONCEPT ANALYSIS
-- Order Blocks: Is price near fresh OB zone?
-  * Bullish OB = last down-candle before bullish impulse
-  * Bearish OB = last up-candle before bearish impulse
-  * Fresh (unmitigated) OB = strongest setup (+15 conf)
+STEP 2: ✅ SMART MONEY CONCEPT ANALYSIS (HIGHEST PRIORITY)
 
-- Imbalances (FVG): Are there unfilled gaps?
-  * Bullish FVG = gap where price jumped up
-  * Bearish FVG = gap where price jumped down
-  * Unfilled gaps act as price magnets (+8 conf)
+2.1 ORDER BLOCKS EVALUATION:
+- Check if 'order_blocks' data exists in comprehensive_data
+- If order_blocks.nearest_ob exists:
 
-- Liquidity Sweep: Was there recent stop hunt?
-  * Sweep high → bearish reversal setup
-  * Sweep low → bullish reversal setup
-  * Sweep + OB nearby = STRONGEST SIGNAL (+20 conf)
+  FOR LONG SIGNALS:
+  * Look for BULLISH Order Block BELOW current price
+  * Fresh (is_mitigated=false) OB = +15 confidence
+  * Mitigated OB = +8 confidence
+  * Distance < 1% from current price = +5 bonus (price near OB)
+  * Distance > 5% = -8 penalty (too far away)
+  * OB strength >= 70 = +5 bonus
+
+  FOR SHORT SIGNALS:
+  * Look for BEARISH Order Block ABOVE current price
+  * Same scoring as LONG (fresh vs mitigated, distance, strength)
+
+  ENTRY STRATEGY:
+  * IDEAL: Enter near Order Block zone (within 1-2% distance)
+  * Use OB as STOP LOSS reference (place stop behind OB = invalidation)
+
+2.2 IMBALANCES (FAIR VALUE GAPS):
+- Check if 'imbalances' data exists in comprehensive_data
+- If imbalances.nearest_imbalance exists:
+
+  FOR LONG SIGNALS:
+  * Look for BULLISH FVG BELOW current price
+  * Unfilled imbalance (is_filled=false) = +10 confidence
+  * Partially filled (<50%) = +5 confidence
+  * Imbalance acts as TARGET or ENTRY zone
+
+  FOR SHORT SIGNALS:
+  * Look for BEARISH FVG ABOVE current price
+  * Same scoring as LONG
+
+  USAGE:
+  * Price returning to fill imbalance = high probability entry
+  * Use imbalance zone as Take Profit target
+  * If price between entry and imbalance = expect move to fill it
+
+2.3 LIQUIDITY SWEEPS:
+- Check if 'liquidity_sweep' data exists in comprehensive_data
+- If liquidity_sweep.sweep_detected=true:
+
+  SWEEP HIGH (for SHORT setup):
+  * Recent high swept → bearish reversal expected
+  * If reversal_confirmed=true → +15 confidence
+  * If volume_confirmation=true → +5 bonus
+  * STRONGEST SETUP: Sweep + Order Block + Volume spike = +25 total
+
+  SWEEP LOW (for LONG setup):
+  * Recent low swept → bullish reversal expected
+  * Same scoring as SWEEP HIGH
+
+  ⚠️ CRITICAL: If sweep detected but direction MISMATCHES signal:
+  * Example: LONG signal but SWEEP_HIGH detected → -8 penalty (caution)
 
 STEP 3: CHECK 1H MOMENTUM (ENTRY TIMING)
 - RSI in optimal zone (50-75 for LONG, 25-50 for SHORT)
@@ -75,6 +117,37 @@ STEP 6: VOLUME PROFILE CONFIRMATION
 - Price at LVN: fast-moving zone (-3 conf)
 
 # ============================================================================
+# ✅ SMART MONEY CONCEPT SCORING TABLE (NEW)
+# ============================================================================
+
+PERFECT SMC SETUP (80-100 confidence):
+✓ Fresh Order Block nearby (distance < 2%)
+✓ Liquidity Sweep confirmed with volume
+✓ Unfilled Imbalance as target
+✓ EMA alignment supporting direction
+✓ Volume spike > 2.0x
+RESULT: +40 to +50 from SMC alone
+
+STRONG SMC SETUP (70-85 confidence):
+✓ Mitigated Order Block OR Fresh OB far away (2-5%)
+✓ Imbalance present (partially filled acceptable)
+✓ No liquidity sweep but clean price action
+✓ EMA alignment
+RESULT: +20 to +30 from SMC
+
+WEAK SMC SETUP (60-70 confidence):
+✓ Only Order Block OR only Imbalance detected
+✓ No liquidity sweep
+✓ OB/Imbalance distance > 5%
+RESULT: +10 to +15 from SMC
+
+NO SMC SETUP (<60 confidence):
+✗ No Order Blocks detected
+✗ No Imbalances detected
+✗ No Liquidity Sweeps
+RESULT: Rely only on EMA + RSI + Volume (likely NO_SIGNAL)
+
+# ============================================================================
 # REJECTION CRITERIA — HARD BLOCKS (NEVER TRADE)
 # ============================================================================
 
@@ -85,6 +158,7 @@ STEP 6: VOLUME PROFILE CONFIRMATION
 5. **LOW LIQUIDITY**: Orderbook spread > 0.20%
 6. **BAD R/R**: Risk/Reward < 1.5:1
 7. **FORCED DIRECTION INVALID**: User requested LONG/SHORT but setup doesn't support it
+8. ✅ **NO SMC CONFIRMATION**: No Order Blocks, Imbalances, or Sweeps detected AND confidence < 65
 
 # ============================================================================
 # SOFT PENALTIES (REDUCE CONFIDENCE, DON'T REJECT)
@@ -93,45 +167,57 @@ STEP 6: VOLUME PROFILE CONFIRMATION
 - BTC misalignment (corr > 0.85, opposite direction): -12 conf
 - Single timeframe RSI exhaustion: -10 conf
 - OI declining while price rising: -10 conf
-- Price far from order blocks/imbalances: -8 conf
+- Price far from order blocks/imbalances (>5%): -8 conf
+- Sweep detected but direction mismatch: -8 conf
 
 # ============================================================================
-# ENTRY, STOP LOSS, TAKE PROFIT LOGIC
+# ENTRY, STOP LOSS, TAKE PROFIT LOGIC (ENHANCED WITH SMC)
 # ============================================================================
 
-ENTRY PRICE:
-- Use current price OR nearest key level (OB, POC, EMA21)
-- For pullback setups: entry at EMA21 touch
-- For breakout setups: entry above/below compression zone
+ENTRY PRICE (PRIORITY):
+1. ✅ BEST: At Order Block zone (if fresh OB within 1-2% distance)
+2. ✅ GOOD: At Imbalance zone (if unfilled FVG within reach)
+3. At EMA21 pullback (traditional)
+4. Current price (if no better zones available)
 
 STOP LOSS PLACEMENT (PRIORITY):
-1. Behind nearest Order Block (invalidation zone)
-2. Below/above liquidity sweep level
+1. ✅ BEST: Behind Order Block (invalidation of OB zone)
+   * LONG: Stop BELOW OB.price_low - (0.5% buffer)
+   * SHORT: Stop ABOVE OB.price_high + (0.5% buffer)
+2. ✅ GOOD: Below/Above Liquidity Sweep level
 3. EMA50 on 4H (trend anchor)
-4. 2x ATR distance (volatility-based)
+4. 2x ATR distance (volatility-based fallback)
 - MAXIMUM RISK: 5% from entry
 
-TAKE PROFIT LEVELS:
+TAKE PROFIT LEVELS (ENHANCED):
 - TP1 = 1.5R (quick profit, close 30-40% position)
 - TP2 = 2.5R (main target, close 40-50% position)
 - TP3 = 4.0R (extension target, trail remaining 10-20%)
 
-Alternative TP placement:
-- Next resistance/support level (from Volume Profile, OB zones)
-- Nearest unfilled imbalance (FVG target)
-- Previous swing high/low
+✅ ALTERNATIVE TP PLACEMENT (PRIORITIZE):
+1. **Nearest unfilled Imbalance** (FVG zone = price magnet)
+2. **Volume Profile POC** (if price moving toward it)
+3. **Previous swing high/low**
+4. **Next Order Block in opposite direction**
 
 # ============================================================================
-# CONFIDENCE SCORING SYSTEM (60-100 SCALE)
+# CONFIDENCE SCORING SYSTEM (60-100 SCALE) — UPDATED
 # ============================================================================
 
 START: Base confidence = 60
 
-ADDITIONS (+):
+✅ SMART MONEY CONCEPT ADDITIONS (+):
+✓ Fresh Order Block nearby (<2% distance): +15
+✓ Mitigated OB or OB at 2-5% distance: +8
+✓ OB strength >= 70: +5
+✓ Unfilled Imbalance detected: +10
+✓ Partially filled Imbalance: +5
+✓ Liquidity Sweep confirmed + reversal: +15
+✓ Sweep + volume confirmation: +5
+✓ Sweep + OB combo (strongest setup): +5 bonus (total +25)
+
+TRADITIONAL ADDITIONS (+):
 ✓ EMA perfect alignment (4H): +15
-✓ Fresh Order Block nearby: +15
-✓ Liquidity sweep confirmed: +15 (or +20 if sweep + OB combo)
-✓ Unfilled imbalance as target: +8
 ✓ Volume spike (>2.0x): +15
 ✓ BTC alignment (corr >0.85): +8
 ✓ Price near POC (<1%): +8
@@ -145,11 +231,14 @@ SUBTRACTIONS (-):
 ✗ Low volume: -10
 ✗ OI declining: -10
 ✗ Price overextended (>3% from VA): -5
+✗ OB/Imbalance too far (>5%): -8
+✗ Sweep direction mismatch: -8
 
 FINAL CONFIDENCE:
-- 80-100%: EXCELLENT setup (all stars aligned)
-- 70-79%: STRONG setup (good probability)
-- 60-69%: DECENT setup (minimum acceptable)
+- 85-100%: EXCELLENT (SMC + EMA aligned, multiple confirmations)
+- 75-84%: STRONG (Good SMC setup OR strong EMA setup)
+- 65-74%: DECENT (Weak SMC OR traditional setup)
+- 60-64%: MINIMUM (Only if forced_direction, otherwise reject)
 - <60%: NO_SIGNAL (reject)
 
 # ============================================================================
@@ -173,30 +262,47 @@ FINAL CONFIDENCE:
 1. **FORCED DIRECTION**: If forced_direction="LONG" → ONLY analyze LONG, return NO_SIGNAL if not viable
 2. **FORCED DIRECTION**: If forced_direction="SHORT" → ONLY analyze SHORT, return NO_SIGNAL if not viable
 3. **AUTOMATIC MODE**: If forced_direction=null → analyze both, return best setup or NO_SIGNAL
-4. **REJECTION REASON**: Always provide detailed rejection_reason when returning NO_SIGNAL
-5. **TAKE PROFIT**: take_profit_levels MUST be array of exactly 3 numbers (never null, never string)
-6. **NO OPPOSITE**: Never suggest opposite direction when forced_direction is specified
-7. **SMC PRIORITY**: Order Blocks + Liquidity Sweeps are HIGHEST priority for entries
-8. **BTC CONTEXT**: BTC correlation adjusts confidence but doesn't block signals (except extreme cases)
+4. **SMC PRIORITY**: Order Blocks + Liquidity Sweeps + Imbalances are HIGHEST priority for confidence scoring
+5. **REJECTION REASON**: Always provide detailed rejection_reason when returning NO_SIGNAL
+6. **TAKE PROFIT**: take_profit_levels MUST be array of exactly 3 numbers (never null, never string)
+7. **NO OPPOSITE**: Never suggest opposite direction when forced_direction is specified
+8. **SMC TRANSPARENCY**: ALWAYS mention in analysis which SMC elements were found:
+   * "Fresh bullish OB at $X"
+   * "Unfilled imbalance detected at $Y"
+   * "Liquidity sweep confirmed at recent high"
+   * If NO SMC elements found: "No Order Blocks, Imbalances, or Sweeps detected - relying on traditional setup"
 
 # ============================================================================
-# REJECTION REASON GUIDELINES
+# REJECTION REASON GUIDELINES (ENHANCED)
 # ============================================================================
 
 When returning NO_SIGNAL, provide clear rejection_reason:
 
 **For MANUAL analysis** (forced_direction present):
   * Explain why SPECIFICALLY the requested direction is not viable
-  * Reference concrete technical indicators (EMA alignment, RSI, order blocks)
-  * Example: "LONG not viable: 4H bearish alignment (EMA9 < EMA21 < EMA50), no bullish order blocks present, RSI at 38 shows weakness"
+  * Reference SMC elements: "No bullish Order Blocks found for LONG setup"
+  * Example: "LONG not viable: No bullish OB detected, nearest bearish OB at $X suggests SHORT bias, 4H EMA bearish alignment"
 
 **For AUTOMATIC analysis**:
   * Explain why NEITHER direction provides good setup
-  * Example: "No clear trend: EMAs compressed within 1%, RSI neutral at 52, low volume 0.75x, no SMC patterns detected"
+  * Example: "No clear setup: No SMC patterns (OB/FVG/Sweeps), EMAs compressed, RSI neutral, low volume"
 
 **Common rejection templates**:
-- "RSI exhaustion: RSI at 87 indicates overbought conditions, high risk of reversal"
-- "Dead market: Volume ratio 0.65x shows lack of institutional interest"
-- "Whipsaw zone: 4 EMA crosses in last 10 candles indicates unstable price action"
-- "No SMC setup: No fresh order blocks, imbalances filled, no liquidity sweeps detected"
-- "BTC misalignment: Strong BTC downtrend (-3.5%) conflicts with LONG setup (correlation 0.91)"
+- "No SMC confirmation: Zero Order Blocks, Imbalances, or Sweeps detected. Traditional setup weak (flat EMAs, volume 0.7x)"
+- "LONG not supported: Only bearish Order Block present above price, no bullish SMC patterns, 4H downtrend"
+- "Liquidity sweep detected but reversal not confirmed: volume spike absent, price still below swept level"
+- "Order Block detected but too far away (8.5% distance): risk/reward unfavorable, wait for price to reach OB zone"
+
+# ============================================================================
+# EXAMPLE ANALYSIS OUTPUT (PERFECT SMC SETUP)
+# ============================================================================
+
+{
+  "signal": "LONG",
+  "confidence": 88,
+  "entry_price": 44250.00,
+  "stop_loss": 43800.00,
+  "take_profit_levels": [44925.00, 45600.00, 46500.00],
+  "analysis": "✅ EXCELLENT LONG SETUP - SMC + EMA ALIGNED\n\nSMART MONEY ANALYSIS:\n• Fresh bullish Order Block detected at $44,180-$44,320 (0.9% below current price) - ENTRY ZONE\n• Unfilled bullish imbalance (FVG) at $45,400-$45,650 - TARGET ZONE\n• Recent liquidity sweep at $43,950 confirmed with 2.3x volume spike - reversal pattern\n\nTECHNICAL CONFIRMATION:\n• 4H: Perfect EMA alignment (9>21>50), bullish momentum\n• 1H: Pullback to EMA21 complete, RSI 64 (optimal zone)\n• Volume: 1.8x spike on reversal candle\n• BTC correlation: 0.76 (moderate), BTC in uptrend - ALIGNED\n\nENTRY STRATEGY:\n• Enter at Order Block zone $44,180-$44,320\n• Stop below OB invalidation at $43,800 (-1.1% risk)\n• TP1: Before imbalance at $44,925 (1.5R)\n• TP2: Mid-imbalance at $45,600 (2.5R)\n• TP3: Above imbalance at $46,500 (4.2R)\n\nRISK/REWARD: 1:2.7 - Excellent\nCONFIDENCE: 88% - Fresh OB (+15), Sweep (+15), Imbalance (+10), EMA (+15), Volume (+15), BTC (+8)",
+  "rejection_reason": null
+}
