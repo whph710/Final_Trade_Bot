@@ -1,96 +1,172 @@
-SWING TRADING SELECTION — SMART MONEY CONCEPT STRATEGY
+SWING TRADING PAIR SELECTION — REAL MARKET FOCUS
 
-ЦЕЛЬ: Отобрать 3-5 пар с лучшими SMC setups (Order Blocks + Liquidity Sweeps + Imbalances).
+═══════════════════════════════════════════════════════════════════
+OBJECTIVE
+═══════════════════════════════════════════════════════════════════
 
-SMART MONEY CONCEPT LOGIC:
-Торговые решения институциональных игроков видны через:
-- **Order Blocks (OB)** — зоны накопления крупного капитала
-- **Fair Value Gaps (FVG/Imbalances)** — зоны где не было торговли (price magnets)
-- **Liquidity Sweeps** — ложные пробои для сбора стопов мелких трейдеров
+From 30-50 SMC-filtered candidates, select 5 pairs with HIGHEST probability
+of profitable swing trades in REAL market conditions.
 
-КРИТЕРИИ ОТБОРА (минимум 70 баллов из 100):
+CRITICAL: This is REAL money. Prioritize quality over quantity.
+Better to select 2 excellent setups than 5 mediocre ones.
 
-1. **Order Block Quality** (40 баллов):
-   - Fresh (non-mitigated) OB = 40 points
-   - Mitigated OB = 20 points
-   - OB within 2% from current price = +10 bonus
-   - OB strength >= 70 = +5 bonus
+═══════════════════════════════════════════════════════════════════
+EVALUATION FRAMEWORK (Total: 100 points)
+═══════════════════════════════════════════════════════════════════
 
-2. **Liquidity Sweep Confirmation** (30 баллов):
-   - Sweep detected + reversal confirmed = 30 points
-   - Sweep detected, reversal weak = 15 points
-   - Volume spike on reversal = +5 bonus
+For EACH candidate pair, calculate score across 5 dimensions:
 
-3. **Imbalance (FVG) Presence** (20 баллов):
-   - Unfilled FVG nearby = 20 points
-   - Partially filled FVG = 10 points
+1. SMC SETUP QUALITY (30 points)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Order Blocks (max 15 points):
+  - Fresh OB + distance <2%: 15 pts
+  - Fresh OB + distance 2-5%: 10 pts
+  - Mitigated OB but recent (<15 candles): 7 pts
+  - Old/far OB (>5% or >25 candles): 3 pts
 
-4. **Volume & Momentum** (10 баллов):
-   - Volume > 1.5x = 10 points
-   - Volume > 1.2x = 5 points
+Imbalances (max 8 points):
+  - Unfilled 4H FVG: 8 pts
+  - Partially filled FVG (<40%): 5 pts
+  - 1H FVG only: 2 pts
+  - No FVG: 0 pts
 
-PATTERN TYPES (приоритет):
-1. **PERFECT_SMC** (85-95% confidence):
-   - Fresh OB + Liquidity Sweep + Unfilled FVG
-   - Все три компонента aligned
+Liquidity Sweeps (max 7 points):
+  - Recent sweep (<10 candles) + reversal confirmed: 7 pts
+  - Sweep but weak reversal: 4 pts
+  - No sweep: 0 pts
 
-2. **STRONG_SMC** (75-85% confidence):
-   - Fresh OB + (Sweep OR FVG)
-   - Два компонента aligned
+2. MULTI-TIMEFRAME ALIGNMENT (25 points)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1H and 4H must tell SAME story:
 
-3. **MODERATE_SMC** (65-75% confidence):
-   - Mitigated OB + FVG
-   - Или Fresh OB но далеко (>5%)
+Perfect alignment (25 pts):
+  - Both TFs show same signal direction
+  - RSI in optimal zone on BOTH (LONG: 50-70, SHORT: 30-50)
+  - Volume increasing on BOTH
+  - EMA alignment on BOTH
 
-4. **WEAK_SMC** (60-65% confidence):
-   - Only OB OR only FVG
-   - Один компонент
+Good alignment (15 pts):
+  - Same direction but one TF has weaker setup
+  - RSI optimal on one TF only
+  - Volume mixed
 
-SCORING EXAMPLE:
-```
-BTCUSDT:
-- Fresh Bullish OB at 0.8% distance (40 + 10 = 50 pts)
-- Sweep Low confirmed (30 pts)
-- Unfilled FVG above (20 pts)
-- Volume 1.8x (10 pts)
-TOTAL: 110 pts → TOP PICK
+Poor alignment (5 pts):
+  - Conflicting signals between TFs
+  - RSI extreme on either TF
+  - Volume decreasing
 
-ETHUSDT:
-- Mitigated Bearish OB (20 pts)
-- No sweep (0 pts)
-- Partial FVG (10 pts)
-- Volume 1.1x (5 pts)
-TOTAL: 35 pts → REJECT
-```
+3. PATTERN TYPE & CONFIDENCE (20 points)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Pattern quality from Stage 1:
 
-INPUT DATA FORMAT:
-For each pair you'll receive:
-- symbol
-- direction (LONG/SHORT)
-- confidence (60-95%)
-- pattern_type (PERFECT_SMC, STRONG_SMC, MODERATE_SMC, WEAK_SMC)
-- ob_analysis (Order Blocks data with nearest_ob details)
-- imbalance_analysis (FVG data with nearest_imbalance details)
-- sweep_analysis (Liquidity Sweep data with direction and confirmation)
-- ema_context (trend context: price_above_ema50, distance_pct)
-- volume_ratio
-- rsi_value
+PERFECT_SMC (confidence 80-95%): 20 pts
+STRONG_SMC (confidence 70-79%): 15 pts
+MODERATE_SMC (confidence 60-69%): 10 pts
+WEAK_SMC (confidence 55-59%): 5 pts
 
-OUTPUT FORMAT:
+4. RISK/REWARD & EXECUTION (15 points)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Realistic R/R after costs:
+
+Entry placement (max 5 pts):
+  - Entry at OB/FVG boundary (limit order): 5 pts
+  - Entry at current price (market): 2 pts
+
+Stop placement (max 5 pts):
+  - Stop <2% from entry: 5 pts
+  - Stop 2-2.5%: 3 pts
+  - Stop >2.5%: 0 pts (REJECT)
+
+Target quality (max 5 pts):
+  - Clear OB/FVG/resistance targets: 5 pts
+  - Vague targets: 2 pts
+
+5. MARKET CONTEXT (10 points)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Current conditions:
+
+Volume (max 4 pts):
+  - Volume ratio >1.5x on both TFs: 4 pts
+  - Volume ratio >1.2x: 2 pts
+  - Volume <1.0x: 0 pts
+
+Trend clarity (max 3 pts):
+  - Clear trend on 4H: 3 pts
+  - Consolidation: 1 pt
+  - Choppy: 0 pts
+
+EMA context (max 3 pts):
+  - Price aligned with EMA50 direction: 3 pts
+  - Near EMA50: 1 pt
+  - Against EMA50: -2 pts
+
+═══════════════════════════════════════════════════════════════════
+SELECTION RULES
+═══════════════════════════════════════════════════════════════════
+
+1. MINIMUM SCORE: 65 points
+   - Pairs scoring <65 are automatically REJECTED
+   - Even if you only find 1-2 pairs above 65, that's better than 5 mediocre ones
+
+2. DIVERSITY:
+   - Avoid selecting multiple pairs with SAME pattern type
+   - Mix LONG and SHORT if both have good setups
+   - Avoid correlated pairs (e.g., don't select both ETH and LINK if highly correlated)
+
+3. POSITION SIZING HINTS:
+   Score 85-100: "Premium setup - full position (2% risk)"
+   Score 75-84: "Good setup - standard position (1.5% risk)"
+   Score 65-74: "Acceptable - reduced position (1% risk)"
+   Score <65: "REJECT - do not select"
+
+═══════════════════════════════════════════════════════════════════
+PRACTICAL CONSIDERATIONS
+═══════════════════════════════════════════════════════════════════
+
+ASK YOURSELF for each pair:
+1. "Would I risk REAL money on this with my own capital?"
+2. "Is the edge clear enough to overcome spread/slippage/fees?"
+3. "Can I execute this trade with a limit order or will I chase?"
+4. "What's my plan if price gaps through my stop?"
+
+RED FLAGS (auto-reject):
+❌ Spread likely >0.15% (low liquidity pairs)
+❌ Stop loss >3% from entry
+❌ Conflicting 1H/4H signals
+❌ RSI >85 or <15 on either TF
+❌ Volume dead (<0.8x on both TFs)
+❌ Pattern confidence <55%
+
+═══════════════════════════════════════════════════════════════════
+OUTPUT FORMAT
+═══════════════════════════════════════════════════════════════════
+
 {
-  "selected_pairs": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "SHIBUSDT"],
-  "reasoning": "Brief explanation why these pairs were chosen (1-2 sentences per pair)"
+  "selected_pairs": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "LTCUSDT", "XRPUSDT"],
 }
 
-SELECTION RULES:
-1. Prioritize PERFECT_SMC and STRONG_SMC patterns
-2. Balance between LONG and SHORT signals if possible
-3. Avoid pairs with same pattern_type (diversity)
-4. If all pairs weak → select top 3 by confidence
-5. Maximum 5 pairs, minimum 1 pair
-6. **NEVER select pairs with confidence < 65%** unless all pairs are weak
-7. Check ob_analysis.nearest_ob data for quality assessment
-8. Check sweep_analysis.sweep_detected and reversal_confirmed
-9. Check imbalance_analysis.nearest_imbalance for unfilled FVGs
+═══════════════════════════════════════════════════════════════════
+CRITICAL REMINDERS
+═══════════════════════════════════════════════════════════════════
 
-CRITICAL: Return ONLY valid JSON, no markdown, no explanations outside JSON.
+1. Quality > Quantity
+   - If only 1-2 pairs score >75, select only those
+   - Don't force 5 selections if market doesn't offer them
+
+2. Real money mindset
+   - Every selected pair should be something YOU would trade
+   - If you have doubts, don't select it
+
+3. Execution matters
+   - Best setup in the world fails if you can't execute properly
+   - Consider liquidity, spread, market hours
+
+4. Context awareness
+   - Market conditions change
+   - What worked yesterday might not work today
+   - Adapt selection criteria to current volatility/liquidity regime
+
+5. Risk management
+   - Position sizing hints help Stage 3 manage risk
+   - Premium setups get full allocation
+   - Marginal setups get reduced allocation

@@ -5,6 +5,7 @@ Trading Bot Configuration — Triple EMA Strategy
 ОБНОВЛЕНО:
 - Добавлены пути для logs/ и signals/
 - Автоматическое создание директорий
+- Увеличены исторические данные для Stage 3
 """
 
 import os
@@ -58,7 +59,7 @@ def safe_bool(value: str) -> bool:
 load_env()
 
 # ============================================================================
-# DIRECTORIES (✅ НОВОЕ)
+# DIRECTORIES
 # ============================================================================
 PROJECT_ROOT = Path(__file__).parent
 
@@ -66,13 +67,12 @@ LOGS_DIR = PROJECT_ROOT / 'logs'
 SIGNALS_DIR = PROJECT_ROOT / 'signals'
 BACKTEST_DIR = SIGNALS_DIR / 'backtest_results'
 
-# Создаём директории если не существуют
 LOGS_DIR.mkdir(exist_ok=True)
 SIGNALS_DIR.mkdir(exist_ok=True)
 BACKTEST_DIR.mkdir(exist_ok=True)
 
 # ============================================================================
-# API KEYS (из .env)
+# API KEYS
 # ============================================================================
 DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
 ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
@@ -84,14 +84,14 @@ TELEGRAM_GROUP_ID = safe_int(os.getenv('TELEGRAM_GROUP_ID', '0'), 0)
 # ============================================================================
 # TIMEFRAMES
 # ============================================================================
-TIMEFRAME_SHORT = "60"  # 1H
-TIMEFRAME_LONG = "240"  # 4H
+TIMEFRAME_SHORT = "60"   # 1H
+TIMEFRAME_LONG = "240"   # 4H
 
 TIMEFRAME_SHORT_NAME = "1H"
 TIMEFRAME_LONG_NAME = "4H"
 
 # ============================================================================
-# STAGE 1: TRIPLE EMA PARAMETERS (9/21/50)
+# STAGE 1: TRIPLE EMA PARAMETERS
 # ============================================================================
 EMA_FAST = 9
 EMA_MEDIUM = 21
@@ -110,7 +110,7 @@ MIN_VOLUME_RATIO = 1.0
 MIN_CONFIDENCE = 60
 
 # ============================================================================
-# ДОПОЛНИТЕЛЬНЫЕ ИНДИКАТОРЫ
+# ИНДИКАТОРЫ
 # ============================================================================
 RSI_PERIOD = 14
 RSI_MIN_LONG = 50
@@ -127,7 +127,7 @@ MACD_SIGNAL = 9
 ATR_PERIOD = 14
 
 # ============================================================================
-# SCANNING PARAMETERS
+# SCANNING
 # ============================================================================
 QUICK_SCAN_CANDLES = 100
 
@@ -143,18 +143,22 @@ STAGE2_CANDLES_1H = 60
 STAGE2_CANDLES_4H = 60
 
 # ============================================================================
-# STAGE 3: AI COMPREHENSIVE ANALYSIS
+# STAGE 3: AI COMPREHENSIVE ANALYSIS (ОБНОВЛЕНО)
 # ============================================================================
 STAGE3_PROVIDER = os.getenv('STAGE3_PROVIDER', 'deepseek')
 STAGE3_MODEL = os.getenv('STAGE3_MODEL', 'deepseek-chat')
 STAGE3_TEMPERATURE = safe_float(os.getenv('STAGE3_TEMPERATURE', '0.7'), 0.7)
-STAGE3_MAX_TOKENS = safe_int(os.getenv('STAGE3_MAX_TOKENS', '5000'), 5000)
 
-STAGE3_CANDLES_1H = 100
-STAGE3_CANDLES_4H = 60
+# ⬆ Увеличено с 5000 до 8000
+STAGE3_MAX_TOKENS = safe_int(os.getenv('STAGE3_MAX_TOKENS', '8000'), 8000)
 
-AI_INDICATORS_HISTORY = 30
-FINAL_INDICATORS_HISTORY = 30
+# ⬆ Исторические данные увеличены
+STAGE3_CANDLES_1H = 200
+STAGE3_CANDLES_4H = 100
+
+# ⬆ История индикаторов увеличена
+AI_INDICATORS_HISTORY = 50
+FINAL_INDICATORS_HISTORY = 50
 
 # ============================================================================
 # PAIR SELECTION
@@ -216,28 +220,22 @@ CLAUDE_RATE_LIMIT_DELAY = safe_int(os.getenv('CLAUDE_RATE_LIMIT_DELAY', '0'), 0)
 # CONFIG CLASS
 # ============================================================================
 class Config:
-    """Централизованный класс конфигурации"""
-
-    # Directories (✅ НОВОЕ)
     PROJECT_ROOT = PROJECT_ROOT
     LOGS_DIR = LOGS_DIR
     SIGNALS_DIR = SIGNALS_DIR
     BACKTEST_DIR = BACKTEST_DIR
 
-    # API Keys
     DEEPSEEK_API_KEY = DEEPSEEK_API_KEY
     ANTHROPIC_API_KEY = ANTHROPIC_API_KEY
     TELEGRAM_BOT_TOKEN = TELEGRAM_BOT_TOKEN
     TELEGRAM_USER_ID = TELEGRAM_USER_ID
     TELEGRAM_GROUP_ID = TELEGRAM_GROUP_ID
 
-    # Timeframes
     TIMEFRAME_SHORT = TIMEFRAME_SHORT
     TIMEFRAME_LONG = TIMEFRAME_LONG
     TIMEFRAME_SHORT_NAME = TIMEFRAME_SHORT_NAME
     TIMEFRAME_LONG_NAME = TIMEFRAME_LONG_NAME
 
-    # Triple EMA
     EMA_FAST = EMA_FAST
     EMA_MEDIUM = EMA_MEDIUM
     EMA_SLOW = EMA_SLOW
@@ -250,7 +248,6 @@ class Config:
     MIN_VOLUME_RATIO = MIN_VOLUME_RATIO
     MIN_CONFIDENCE = MIN_CONFIDENCE
 
-    # Дополнительные индикаторы
     RSI_PERIOD = RSI_PERIOD
     RSI_MIN_LONG = RSI_MIN_LONG
     RSI_MAX_LONG = RSI_MAX_LONG
@@ -262,10 +259,8 @@ class Config:
     MACD_SIGNAL = MACD_SIGNAL
     ATR_PERIOD = ATR_PERIOD
 
-    # Scanning
     QUICK_SCAN_CANDLES = QUICK_SCAN_CANDLES
 
-    # Stage 2
     STAGE2_PROVIDER = STAGE2_PROVIDER
     STAGE2_MODEL = STAGE2_MODEL
     STAGE2_TEMPERATURE = STAGE2_TEMPERATURE
@@ -273,7 +268,7 @@ class Config:
     STAGE2_CANDLES_1H = STAGE2_CANDLES_1H
     STAGE2_CANDLES_4H = STAGE2_CANDLES_4H
 
-    # Stage 3
+    # Updated Stage 3
     STAGE3_PROVIDER = STAGE3_PROVIDER
     STAGE3_MODEL = STAGE3_MODEL
     STAGE3_TEMPERATURE = STAGE3_TEMPERATURE
@@ -281,47 +276,37 @@ class Config:
     STAGE3_CANDLES_1H = STAGE3_CANDLES_1H
     STAGE3_CANDLES_4H = STAGE3_CANDLES_4H
 
-    # Indicators history
     AI_INDICATORS_HISTORY = AI_INDICATORS_HISTORY
     FINAL_INDICATORS_HISTORY = FINAL_INDICATORS_HISTORY
 
-    # Trading
     MAX_FINAL_PAIRS = MAX_FINAL_PAIRS
     MIN_RISK_REWARD_RATIO = MIN_RISK_REWARD_RATIO
 
-    # Market data
     OI_CHANGE_GROWING_THRESHOLD = OI_CHANGE_GROWING_THRESHOLD
     OI_CHANGE_DECLINING_THRESHOLD = OI_CHANGE_DECLINING_THRESHOLD
 
-    # API
     API_TIMEOUT = API_TIMEOUT
     API_TIMEOUT_ANALYSIS = API_TIMEOUT_ANALYSIS
     MAX_CONCURRENT = MAX_CONCURRENT
 
-    # DeepSeek
     DEEPSEEK_URL = DEEPSEEK_URL
     DEEPSEEK_MODEL = DEEPSEEK_MODEL
     DEEPSEEK_REASONING = DEEPSEEK_REASONING
 
-    # Anthropic
     ANTHROPIC_MODEL = ANTHROPIC_MODEL
     ANTHROPIC_THINKING = ANTHROPIC_THINKING
 
-    # Prompts
     SELECTION_PROMPT = SELECTION_PROMPT
     ANALYSIS_PROMPT = ANALYSIS_PROMPT
 
-    # AI legacy
     AI_TEMPERATURE_SELECT = AI_TEMPERATURE_SELECT
     AI_TEMPERATURE_ANALYZE = AI_TEMPERATURE_ANALYZE
     AI_MAX_TOKENS_SELECT = AI_MAX_TOKENS_SELECT
     AI_MAX_TOKENS_ANALYZE = AI_MAX_TOKENS_ANALYZE
 
-    # Rate limiting
     CLAUDE_RATE_LIMIT_DELAY = CLAUDE_RATE_LIMIT_DELAY
 
 
-# Создаём экземпляр для удобного импорта
 config = Config()
 
 
@@ -329,7 +314,6 @@ config = Config()
 # VALIDATION
 # ============================================================================
 def validate_config():
-    """Проверка обязательных параметров"""
     errors = []
 
     if not TELEGRAM_BOT_TOKEN:
@@ -350,5 +334,4 @@ def validate_config():
         )
 
 
-# Валидируем конфигурацию при импорте
 validate_config()

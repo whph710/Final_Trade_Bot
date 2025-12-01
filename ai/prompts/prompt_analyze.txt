@@ -1,99 +1,213 @@
-PROMPT A — SWING TRADING ANALYSIS — SMC ADAPTED FOR REAL MARKET
+PROFESSIONAL SWING TRADING ANALYSIS — REAL MARKET CONDITIONS
 
-GOAL
-Определить направление торговли используя Smart Money Concept.
-⚠️ ВАЖНО: На реальном рынке ИДЕАЛЬНЫЕ условия встречаются редко.
-Ищи ХОРОШИЕ сетапы с подтверждением, а не только ИДЕАЛЬНЫЕ.
+CRITICAL MINDSET:
+You are analyzing REAL money trades, not paper trading. Every decision has actual P&L consequences.
+Markets are PROBABILISTIC, not deterministic. Focus on edge and risk management, not certainty.
 
-INPUT
-{
-  candles_1h, candles_4h,
-  indicators_1h/4h (rsi, volume_ratio),
-  volume_profile (POC, VAH, VAL, HVN/LVN),
-  order_blocks,
-  imbalances,
-  liquidity_sweep,
-  ema_context (только для контекста, не критично),
-  forced_direction
-}
+═══════════════════════════════════════════════════════════════════
+PHASE 1: HISTORICAL PATTERN RECOGNITION (20% weight)
+═══════════════════════════════════════════════════════════════════
 
-RULES — ENTRY (АДАПТИРОВАНО)
-✅ РАЗРЕШЁННЫЕ точки входа:
-1) Граница Order Block (верх/низ зоны) — ПРИОРИТЕТ если OB близко (<5%)
-2) Граница Imbalance (FVG) — если unfilled
-3) Уровень ликвидности (sweep point)
-4) Volume Profile уровни: POC, VAH, VAL, HVN/LVN
-5) Ключевые swing levels 1H/4H
-6) ✅ НОВОЕ: Текущая цена ДОПУСТИМА если:
-   - Есть FRESH Order Block в пределах 5%
-   - Есть подтверждение (volume spike ИЛИ sweep ИЛИ imbalance nearby)
-   - RSI не в extreme зоне (15-85)
+INPUT DATA INCLUDES:
+- candles_1h: Last 200 bars (not just 100)
+- candles_4h: Last 100 bars (not just 60)
+- order_blocks: Detected OB zones with historical data
+- imbalances: FVG zones with fill history
+- liquidity_sweeps: Recent sweep events
 
-⚠️ ГЛАВНОЕ: Entry должен иметь ЛОГИКУ и ПОДТВЕРЖДЕНИЕ.
-Не обязательно точно на уровне, но рядом с сильной SMC зоной.
+YOUR TASK:
+1. ANALYZE HISTORICAL OB PERFORMANCE:
+   - How did price react to previous OBs in last 50-100 bars?
+   - What % of OBs got respected vs violated?
+   - Pattern: Do fresh OBs work better than mitigated ones HERE?
 
-RULES — TAKE PROFIT (АДАПТИРОВАНО)
-✅ ПРИОРИТЕТ TP уровней:
-1) Ближний противоположный OB (если есть в пределах 3-8%)
-2) Ближайший unfilled FVG (если есть)
-3) POC, VAH, VAL (Volume Profile levels)
-4) Значимый swing high/low
+2. ANALYZE FVG FILL PATTERNS:
+   - How many FVGs got filled vs left open in last 100 bars?
+   - Timeframe: Do 4H FVGs work better than 1H?
+   - Speed: How fast do FVGs typically fill?
 
-⚠️ Если НЕТ чётких уровней в разумном диапазоне:
-- Используй R/R подход: TP1=1.5R, TP2=2.5R, TP3=4R от entry/stop
-- Это ДОПУСТИМО когда market structure не даёт чётких целей
+3. ANALYZE SWEEP EFFECTIVENESS:
+   - Did previous sweeps lead to reversals or fakeouts?
+   - Context: Sweeps during trends vs ranges behave differently
 
-RULES — STOP LOSS
-Stop Loss ОБЯЗАН быть за зоной интереса:
-- За Order Block (invalidation point)
-- За swing low/high
-- Максимум: 2.5% от entry
+4. IDENTIFY RECURRING PATTERNS:
+   - Does this pair tend to respect certain price levels repeatedly?
+   - Are there time-based patterns (certain hours/days more volatile)?
+   - Volume patterns: Does high volume = continuation or reversal here?
 
-REJECTIONS
-- Нет SMC паттернов (OB ИЛИ FVG ИЛИ Sweep)
-- RSI extreme (>85 или <15)
-- Низкий объём (<0.8x)
-- forced_direction, но market structure против
-- Нет логики для entry (ни уровней, ни подтверждения)
+SCORING:
+- If historical patterns STRONGLY support current setup: +15 points
+- If patterns are NEUTRAL: 0 points
+- If patterns CONTRADICT current setup: -20 points
 
-CRITICAL: Баланс между качеством и реальностью
-- PERFECT setup (OB + FVG + Sweep aligned) = 85-95% confidence
-- STRONG setup (OB + одно подтверждение) = 70-85% confidence
-- MODERATE setup (OB nearby + volume) = 60-70% confidence
-- Минимум для сигнала: 60% confidence
+EXAMPLE GOOD PATTERN:
+"Last 5 bullish OBs on 4H had 80% success rate when accompanied by sweep.
+Current setup matches this pattern. Historical edge is strong."
+
+EXAMPLE BAD PATTERN:
+"Last 10 FVGs on this pair got filled within 2 candles, none held as support.
+Current setup relies on unfilled FVG - historical data shows low probability."
+
+═══════════════════════════════════════════════════════════════════
+PHASE 2: MARKET CONTEXT ANALYSIS (20% weight)
+═══════════════════════════════════════════════════════════════════
+
+ANALYZE CURRENT MARKET STATE:
+
+1. VOLATILITY ASSESSMENT:
+   - Calculate ATR ratio (current ATR vs 20-period average)
+   - High volatility (>1.5x): Widen stops, reduce position
+   - Low volatility (<0.7x): Tighter stops acceptable
+
+2. LIQUIDITY CONDITIONS:
+   - Spread analysis: spread_pct from orderbook
+   - If spread > 0.15%: REJECT (slippage will kill profit)
+   - Volume profile: Are we in HVN (good) or LVN (bad)?
+
+3. TREND vs RANGE:
+   - Last 50 bars on 4H: calculate ADX or price action structure
+   - Trend: OB pullbacks work well
+   - Range: Reversals at edges work well
+   - Transition: AVOID (most dangerous)
+
+4. MACRO MARKET ALIGNMENT:
+   - BTC correlation: If >0.85 and BTC trending opposite = HIGH RISK
+   - Funding rate: If extreme (>0.1% or <-0.1%) = counter-trend pressure
+   - OI change: Must align with signal direction
+
+SCORING:
+- Favorable conditions: +15 points
+- Neutral: 0 points
+- Unfavorable: -25 points (may REJECT even if setup looks good)
+
+═══════════════════════════════════════════════════════════════════
+PHASE 3: SMC SETUP QUALITY (30% weight)
+═══════════════════════════════════════════════════════════════════
+
+RULES FOR REAL MARKET (not textbook):
+
+1. ORDER BLOCKS:
+   PREMIUM SETUPS (score 25-30):
+   - Fresh OB within 3% of price
+   - OB formed on high volume (>1.5x average)
+   - OB aligns with higher TF structure
+   - Historical data shows OBs work well on this pair
+
+   ACCEPTABLE SETUPS (score 15-20):
+   - Mitigated OB but recent (age < 20 candles)
+   - Distance 3-5% (not ideal but workable)
+   - Volume confirmation present
+
+   WEAK SETUPS (score 5-10):
+   - OB >5% away (entry will be poor)
+   - Old OB (age > 30 candles) - likely stale
+   - No volume confirmation
+
+   REJECT:
+   - OB > 8% away (too far, will get stopped out)
+   - OB violated multiple times already (broken structure)
+
+2. IMBALANCES (FVG):
+   PREMIUM:
+   - Unfilled FVG on 4H timeframe
+   - Gap size > 0.5% (significant)
+   - Aligns with OB direction
+
+   REJECT:
+   - FVG already 70%+ filled (weak magnet)
+   - 1H FVG only (too weak for swing trade)
+
+3. LIQUIDITY SWEEPS:
+   PREMIUM:
+   - Recent sweep (within last 10 candles)
+   - Strong reversal candle after sweep (>1.5x average body)
+   - Volume spike confirmation
+
+   REJECT:
+   - Old sweep (>20 candles ago)
+   - Weak reversal (small candles, low volume)
+
+═══════════════════════════════════════════════════════════════════
+PHASE 4: RISK MANAGEMENT CALCULATION (30% weight)
+═══════════════════════════════════════════════════════════════════
+
+REAL MARKET COSTS:
+- Trading fee: 0.05% per trade (taker)
+- Slippage estimate: 0.03-0.10% depending on spread
+- Minimum net R/R after costs: 2.0 (not 1.5)
+
+ENTRY PLACEMENT:
+❌ BAD: Entry at current price (will get spread/slippage)
+✅ GOOD: Entry at OB zone boundary (limit order, better fill)
+
+STOP LOSS:
+❌ BAD: Stop exactly at OB invalidation (will get hunted)
+✅ GOOD: Stop 0.3-0.5% BEYOND invalidation point (buffer for wick)
+⚠️ CRITICAL: Max stop size = 2.5% from entry (hard limit)
+
+TAKE PROFIT:
+❌ BAD: TP at exact resistance (won't fill)
+✅ GOOD: TP 0.2-0.3% BEFORE resistance
+✅ OPTIMAL: Scale out (TP1 50%, TP2 30%, TP3 20%)
+
+NET R/R CALCULATION:
+Real Risk = (entry - stop) + fees + slippage = entry * 0.0258 (assume 2.5% stop + 0.08% costs)
+Real Reward = (tp - entry) - fees - slippage
+
+Minimum: Real Reward / Real Risk >= 2.0
+Good: >= 2.5
+Excellent: >= 3.0
+
+═══════════════════════════════════════════════════════════════════
+PHASE 5: PROBABILITY ASSESSMENT
+═══════════════════════════════════════════════════════════════════
+
+Combine all scores:
+- Historical patterns: X points
+- Market context: Y points
+- SMC quality: Z points
+- Risk/Reward: W points
+
+TOTAL SCORE = X + Y + Z + W
+
+DECISION MATRIX:
+- Score >= 70: STRONG SIGNAL (60-70% win rate expected)
+  → confidence = 75-85%
+
+- Score 50-69: MODERATE SIGNAL (50-60% win rate expected)
+  → confidence = 60-74%
+
+- Score 30-49: WEAK SIGNAL (40-50% win rate)
+  → confidence = 50-59%
+  → Consider REJECTING unless R/R is exceptional (>3.0)
+
+- Score < 30: REJECT
+  → NO_SIGNAL
+  → Explain why in rejection_reason
+
+═══════════════════════════════════════════════════════════════════
+CRITICAL REJECTION CRITERIA (any one = auto reject)
+═══════════════════════════════════════════════════════════════════
+
+1. Spread > 0.15% (slippage will kill trade)
+2. Net R/R after costs < 1.8
+3. Stop loss would be > 3% from entry
+4. Historical pattern strongly contradicts (e.g., last 10 similar setups all failed)
+5. BTC correlation >0.85 and BTC moving opposite direction
+6. Low liquidity (orderbook depth < 10 BTC equivalent)
+7. forced_direction specified but market structure clearly against it
+
+═══════════════════════════════════════════════════════════════════
+OUTPUT FORMAT(СТРОГО В ЭТОМ ФОРМАТЕ, НИКАК ИНАЧЕ!!!!!!!)
+═══════════════════════════════════════════════════════════════════
 
 OUTPUT (JSON)
 {
   "signal": "LONG" | "SHORT" | "NO_SIGNAL",
-  "confidence": 60–95,
-  "entry_price": "число (может быть current price если логика есть)",
-  "stop_loss": "за зоной invalidation",
-  "take_profit_levels": ["уровень1","уровень2","уровень3"],
-  "analysis": "детальное объяснение логики setup",
-  "rejection_reason": null | "причина если NO_SIGNAL"
+  "confidence": 60–100,
+  "entry_price": "strict level only",
+  "stop_loss": "behind level",
+  "take_profit_levels": ["level1","level2","level3"],
+  "analysis": "SMC reasoning only",
+  "rejection_reason": null | "text"
 }
-
-EXAMPLES:
-
-Example 1: PERFECT SETUP (OB + Sweep + FVG)
-"Bullish OB at $44,200 (2% below), Sweep Low confirmed at $44,150,
-unfilled FVG above at $45,500. ENTRY: $44,300 (near OB),
-STOP: $44,000 (behind sweep), TP1: $45,500 (FVG), TP2: $46,800 (VAH),
-TP3: $48,000 (swing high). Confidence: 92%"
-
-Example 2: STRONG SETUP (Fresh OB + Volume)
-"Fresh Bearish OB at $67,500 (1.5% above), strong volume spike on rejection candle.
-NO sweep but price action clean. ENTRY: $67,200 (current price below OB),
-STOP: $68,000 (behind OB), TP1: $65,800 (1.5R), TP2: $64,500 (POC),
-TP3: $62,000 (swing low). Confidence: 78%"
-
-Example 3: MODERATE SETUP (Mitigated OB + Imbalance)
-"Mitigated Bullish OB at $28,900 (3% below), partially filled FVG above.
-Volume average but RSI oversold (32). ENTRY: $29,200 (near OB retest),
-STOP: $28,500 (behind OB), TP1: $30,500 (1.5R), TP2: $31,800 (FVG target),
-TP3: $33,000 (2.5R). Confidence: 65%"
-
-Example 4: NO_SIGNAL (no confirmation)
-"Bullish OB at $52,000 (8% away), no imbalances, no sweeps,
-volume weak (0.7x), RSI neutral. Market structure не даёт подтверждения.
-NO SIGNAL. rejection_reason: OB too far and no confirmation patterns"
