@@ -1,11 +1,11 @@
 """
-Backtesting Module - ENHANCED SMC SCORING
+Backtesting Module - FIXED SMC SCORING
 Файл: utils/backtesting.py
 
-ИСПРАВЛЕНО:
-✅ Убрана случайная эвристика (confidence % 2)
-✅ Добавлен анализ SMC данных из comprehensive_data
-✅ Улучшен quality_score с учётом OB/FVG/Sweeps
+✅ ИСПРАВЛЕНО:
+- Улучшен парсинг SMC данных с fallback логикой
+- Добавлены проверки на None/отсутствие данных
+- Детерминированная оценка (убрана случайность)
 """
 
 import json
@@ -133,14 +133,8 @@ class Backtester:
             comprehensive_data: Dict
     ) -> tuple[str, float]:
         """
-        ✅ УЛУЧШЕНО: Оценка исхода с учётом SMC данных
-
-        Returns:
-            (outcome, exit_price)
+        ✅ УЛУЧШЕНО: Оценка исхода с SMC данными и fallback логикой
         """
-        # ============================================================
-        # РАСЧЁТ QUALITY SCORE (0-100)
-        # ============================================================
         quality_score = 0
 
         # 1. Confidence (макс 35 баллов)
@@ -157,159 +151,241 @@ class Backtester:
             quality_score += 10
 
         # ============================================================
-        # 3. ✅ НОВОЕ: SMC ДАННЫЕ (макс 20 баллов)
+        # 3. ✅ ИСПРАВЛЕНО: SMC ДАННЫЕ с fallback (макс 20 баллов)
         # ============================================================
 
         # Order Blocks (макс 10 баллов)
-        try:
-            # Пытаемся найти SMC данные в разных местах
-            smc_data = None
-
-            # Вариант 1: прямо в comprehensive_data
-            if 'order_blocks' in comprehensive_data:
-                smc_data = comprehensive_data
-            # Вариант 2: внутри вложенного словаря
-            elif 'smc_data' in comprehensive_data:
-                smc_data = comprehensive_data['smc_data']
-
-            if smc_data:
-                ob_data = smc_data.get('order_blocks', {})
-
-                if isinstance(ob_data, dict):
-                    nearest_ob = ob_data.get('nearest_ob')
-
-                    if nearest_ob and isinstance(nearest_ob, dict):
-                        # Fresh OB = сильный сигнал
-                        if not nearest_ob.get('is_mitigated', True):
-                            quality_score += 8
-                        else:
-                            quality_score += 4
-
-                        # Близкий OB = точный entry
-                        distance = nearest_ob.get('distance_pct', 100)
-                        if distance < 2.0:
-                            quality_score += 5
-                        elif distance < 5.0:
-                            quality_score += 2
-        except Exception as e:
-            logger.debug(f"SMC OB parsing error: {e}")
+        ob_score = self._score_order_blocks(comprehensive_data)
+        quality_score += ob_score
 
         # Imbalances/FVG (макс 5 баллов)
-        try:
-            if smc_data:
-                imb_data = smc_data.get('imbalances', {})
-
-                if isinstance(imb_data, dict):
-                    nearest_imb = imb_data.get('nearest_imbalance')
-
-                    if nearest_imb and isinstance(nearest_imb, dict):
-                        if not nearest_imb.get('is_filled', True):
-                            quality_score += 5
-                        else:
-                            fill_pct = nearest_imb.get('fill_percentage', 100)
-                            if fill_pct < 50:
-                                quality_score += 3
-        except Exception as e:
-            logger.debug(f"SMC Imbalance parsing error: {e}")
+        imb_score = self._score_imbalances(comprehensive_data)
+        quality_score += imb_score
 
         # Liquidity Sweeps (макс 5 баллов)
-        try:
-            if smc_data:
-                sweep_data = smc_data.get('liquidity_sweep', {})
-
-                if isinstance(sweep_data, dict) and sweep_data.get('sweep_detected'):
-                    if sweep_data.get('reversal_confirmed'):
-                        quality_score += 5
-                    else:
-                        quality_score += 2
-        except Exception as e:
-            logger.debug(f"SMC Sweep parsing error: {e}")
+        sweep_score = self._score_sweeps(comprehensive_data)
+        quality_score += sweep_score
 
         # ============================================================
         # 4. Market Data (макс 10 баллов)
         # ============================================================
         market_data = comprehensive_data.get('market_data', {})
 
-        # Funding rate
-        funding_rate = abs(market_data.get('funding_rate', 0))
-        if funding_rate < 0.01:
-            quality_score += 3
+        if isinstance(market_data, dict):
+            # Funding rate
+            funding_rate = abs(market_data.get('funding_rate', 0))
+            if funding_rate < 0.01:
+                quality_score += 3
 
-        # OI change
-        oi_change = market_data.get('oi_change_24h', 0)
-        if signal_type == 'LONG' and oi_change > 0:
-            quality_score += 4
-        elif signal_type == 'SHORT' and oi_change < 0:
-            quality_score += 4
+            # OI change
+            oi_change = market_data.get('oi_change_24h', 0)
+            if signal_type == 'LONG' and oi_change > 0:
+                quality_score += 4
+            elif signal_type == 'SHORT' and oi_change < 0:
+                quality_score += 4
 
-        # Spread
-        spread = market_data.get('spread_pct', 0)
-        if spread < 0.10:
-            quality_score += 3
+            # Spread
+            spread = market_data.get('spread_pct', 0)
+            if spread < 0.10:
+                quality_score += 3
 
         # ============================================================
         # 5. Indicators (макс 10 баллов)
         # ============================================================
-        indicators = comprehensive_data.get('indicators_4h', {}).get('current', {})
+        indicators = comprehensive_data.get('indicators_4h', {})
 
-        # RSI optimal
-        rsi = indicators.get('rsi', 50)
-        if signal_type == 'LONG' and 40 <= rsi <= 70:
-            quality_score += 5
-        elif signal_type == 'SHORT' and 30 <= rsi <= 60:
-            quality_score += 5
+        if isinstance(indicators, dict):
+            current = indicators.get('current', {})
 
-        # Volume
-        volume_ratio = indicators.get('volume_ratio', 1.0)
-        if volume_ratio > 1.5:
-            quality_score += 5
+            if isinstance(current, dict):
+                # RSI optimal
+                rsi = current.get('rsi', 50)
+                if signal_type == 'LONG' and 40 <= rsi <= 70:
+                    quality_score += 5
+                elif signal_type == 'SHORT' and 30 <= rsi <= 60:
+                    quality_score += 5
+
+                # Volume
+                volume_ratio = current.get('volume_ratio', 1.0)
+                if volume_ratio > 1.5:
+                    quality_score += 5
 
         # Нормализуем score
         quality_score = max(0, min(100, quality_score))
 
         logger.debug(
             f"Backtest quality score: {quality_score:.1f} "
-            f"(conf={confidence}, rr={rr_ratio:.2f}, type={signal_type})"
+            f"(conf={confidence}, rr={rr_ratio:.2f}, "
+            f"OB={ob_score}, FVG={imb_score}, Sweep={sweep_score})"
         )
 
         # ============================================================
         # ОПРЕДЕЛЕНИЕ ИСХОДА
         # ============================================================
 
-        # Пороги основаны на качестве сигнала
         if quality_score >= 80:
-            # Отличный сигнал → TP3
             outcome = 'TP3_HIT'
             exit_price = tp_levels[2] if len(tp_levels) > 2 else tp_levels[0]
 
         elif quality_score >= 65:
-            # Хороший сигнал → TP2
             outcome = 'TP2_HIT'
             exit_price = tp_levels[1] if len(tp_levels) > 1 else tp_levels[0]
 
         elif quality_score >= 50:
-            # Средний сигнал → TP1
             outcome = 'TP1_HIT'
             exit_price = tp_levels[0]
 
         elif quality_score >= 35:
-            # Слабый сигнал → 60/40 между TP1 и SL
-            # ✅ ИСПРАВЛЕНО: Детерминизм через hash символа
+            # ✅ Детерминизм через hash
             decision_hash = hash(f"{entry}{stop}{confidence}") % 10
 
-            if decision_hash >= 4:  # 60% шанс на TP1
+            if decision_hash >= 4:  # 60% на TP1
                 outcome = 'TP1_HIT'
                 exit_price = tp_levels[0]
-            else:  # 40% шанс на SL
+            else:  # 40% на SL
                 outcome = 'SL_HIT'
                 exit_price = stop
 
         else:
-            # Очень слабый сигнал → SL
             outcome = 'SL_HIT'
             exit_price = stop
 
         return outcome, exit_price
+
+    def _score_order_blocks(self, comprehensive_data: Dict) -> float:
+        """
+        ✅ НОВОЕ: Скоринг Order Blocks с fallback логикой
+        """
+        try:
+            # Пытаемся найти OB данные
+            ob_data = None
+
+            # Вариант 1: прямо в comprehensive_data
+            if 'order_blocks' in comprehensive_data:
+                ob_data = comprehensive_data['order_blocks']
+            # Вариант 2: внутри вложенного словаря
+            elif 'smc_data' in comprehensive_data:
+                smc = comprehensive_data.get('smc_data', {})
+                if isinstance(smc, dict):
+                    ob_data = smc.get('order_blocks')
+
+            if not ob_data or not isinstance(ob_data, dict):
+                logger.debug("No OB data found or invalid format")
+                return 0
+
+            nearest_ob = ob_data.get('nearest_ob')
+
+            if not nearest_ob or not isinstance(nearest_ob, dict):
+                logger.debug("No nearest OB found")
+                return 0
+
+            score = 0
+
+            # Fresh OB = сильный сигнал
+            is_mitigated = nearest_ob.get('is_mitigated', True)
+            if not is_mitigated:
+                score += 8
+            else:
+                score += 4
+
+            # Близкий OB = точный entry
+            distance = nearest_ob.get('distance_pct', 100)
+            if distance < 2.0:
+                score += 5
+            elif distance < 5.0:
+                score += 2
+
+            # Age bonus (если есть)
+            age = nearest_ob.get('age_in_candles', 100)
+            if age <= 10:
+                score += 2
+
+            return min(10, score)  # Макс 10 баллов
+
+        except Exception as e:
+            logger.debug(f"OB scoring error: {e}")
+            return 0
+
+    def _score_imbalances(self, comprehensive_data: Dict) -> float:
+        """
+        ✅ НОВОЕ: Скоринг Imbalances с fallback логикой
+        """
+        try:
+            # Пытаемся найти Imbalance данные
+            imb_data = None
+
+            if 'imbalances' in comprehensive_data:
+                imb_data = comprehensive_data['imbalances']
+            elif 'smc_data' in comprehensive_data:
+                smc = comprehensive_data.get('smc_data', {})
+                if isinstance(smc, dict):
+                    imb_data = smc.get('imbalances')
+
+            if not imb_data or not isinstance(imb_data, dict):
+                logger.debug("No Imbalance data found")
+                return 0
+
+            nearest_imb = imb_data.get('nearest_imbalance')
+
+            if not nearest_imb or not isinstance(nearest_imb, dict):
+                logger.debug("No nearest Imbalance found")
+                return 0
+
+            score = 0
+
+            # Unfilled FVG = сильнее
+            is_filled = nearest_imb.get('is_filled', True)
+            if not is_filled:
+                score += 5
+            else:
+                fill_pct = nearest_imb.get('fill_percentage', 100)
+                if fill_pct < 50:
+                    score += 3
+
+            return min(5, score)  # Макс 5 баллов
+
+        except Exception as e:
+            logger.debug(f"Imbalance scoring error: {e}")
+            return 0
+
+    def _score_sweeps(self, comprehensive_data: Dict) -> float:
+        """
+        ✅ НОВОЕ: Скоринг Liquidity Sweeps с fallback логикой
+        """
+        try:
+            # Пытаемся найти Sweep данные
+            sweep_data = None
+
+            if 'liquidity_sweep' in comprehensive_data:
+                sweep_data = comprehensive_data['liquidity_sweep']
+            elif 'smc_data' in comprehensive_data:
+                smc = comprehensive_data.get('smc_data', {})
+                if isinstance(smc, dict):
+                    sweep_data = smc.get('liquidity_sweep')
+
+            if not sweep_data or not isinstance(sweep_data, dict):
+                logger.debug("No Sweep data found")
+                return 0
+
+            sweep_detected = sweep_data.get('sweep_detected', False)
+
+            if not sweep_detected:
+                return 0
+
+            score = 0
+
+            # Reversal confirmed = сильнее
+            reversal_confirmed = sweep_data.get('reversal_confirmed', False)
+            if reversal_confirmed:
+                score += 5
+            else:
+                score += 2
+
+            return min(5, score)  # Макс 5 баллов
+
+        except Exception as e:
+            logger.debug(f"Sweep scoring error: {e}")
+            return 0
 
     def _calculate_metrics(self, results: List[Dict], stats: Dict) -> Dict:
         """Рассчитать агрегированные метрики"""

@@ -1,11 +1,9 @@
 """
-Stage 3: Comprehensive Analysis - FULL SMC INTEGRATION
+Stage 3: Comprehensive Analysis - FIXED VERSION
 Файл: stages/stage3_analysis.py
 
-✅ ПОЛНАЯ ИНТЕГРАЦИЯ:
-- Order Blocks
-- Imbalances (FVG)
-- Liquidity Sweeps
+✅ ИСПРАВЛЕНО:
+- Проблема #7: Добавлена проверка длины массивов индикаторов перед срезом
 """
 
 import logging
@@ -36,11 +34,7 @@ class TradingSignal:
 
 
 async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], List[Dict]]:
-    """
-    Stage 3: Comprehensive analysis для выбранных пар
-
-    ✅ ПОЛНЫЙ PIPELINE: Market Data, Correlation, Volume Profile, SMC (OB, FVG, Sweeps)
-    """
+    """Stage 3: Comprehensive analysis для выбранных пар"""
     from data_providers import fetch_candles, normalize_candles, get_market_snapshot
     from data_providers.bybit_client import get_session
     from ai.ai_router import AIRouter
@@ -55,7 +49,7 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
         f"(provider: {config.STAGE3_PROVIDER})"
     )
 
-    # Загрузка BTC свечей для корреляции
+    # Загрузка BTC свечей
     logger.debug("Stage 3: Loading BTC candles for correlation analysis")
 
     btc_candles_1h_raw = await fetch_candles(
@@ -96,12 +90,10 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
     ai_router = AIRouter()
     session = await get_session()
 
-    # Анализ каждой пары
     for symbol in selected_pairs:
         try:
             logger.info(f"Stage 3: Analyzing {symbol}...")
 
-            # Загрузка свечей
             candles_1h_raw, candles_4h_raw = await _load_candles(symbol)
 
             if not candles_1h_raw or not candles_4h_raw:
@@ -128,7 +120,7 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 })
                 continue
 
-            # Рассчитываем полные индикаторы
+            # ✅ ИСПРАВЛЕНО: Рассчитываем полные индикаторы с проверкой длины
             indicators_1h = _calculate_full_indicators(candles_1h)
             indicators_4h = _calculate_full_indicators(candles_4h)
 
@@ -142,15 +134,11 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
 
             current_price = float(candles_1h.closes[-1])
 
-            # ============================================================
             # MARKET DATA
-            # ============================================================
             logger.debug(f"Stage 3: {symbol} - Loading market data")
             market_data = await get_market_snapshot(symbol, session)
 
-            # ============================================================
             # BTC CORRELATION
-            # ============================================================
             logger.debug(f"Stage 3: {symbol} - Analyzing BTC correlation")
             from indicators import get_comprehensive_correlation_analysis
 
@@ -161,31 +149,25 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 signal_direction='UNKNOWN'
             )
 
-            # ============================================================
             # VOLUME PROFILE
-            # ============================================================
             logger.debug(f"Stage 3: {symbol} - Calculating Volume Profile")
             from indicators import calculate_volume_profile, analyze_volume_profile
 
             vp_data = calculate_volume_profile(candles_4h, num_bins=50)
             vp_analysis = analyze_volume_profile(vp_data, current_price) if vp_data else None
 
-            # ============================================================
-            # ✅ SMART MONEY CONCEPT: ORDER BLOCKS
-            # ============================================================
+            # SMC: ORDER BLOCKS
             logger.debug(f"Stage 3: {symbol} - Detecting Order Blocks")
             from indicators.order_blocks import analyze_order_blocks
 
             ob_analysis = analyze_order_blocks(
                 candles_4h,
                 current_price,
-                signal_direction='UNKNOWN',  # Пока неизвестно
+                signal_direction='UNKNOWN',
                 lookback=50
             )
 
-            # ============================================================
-            # ✅ SMART MONEY CONCEPT: IMBALANCES (FVG)
-            # ============================================================
+            # SMC: IMBALANCES
             logger.debug(f"Stage 3: {symbol} - Detecting Imbalances")
             from indicators.imbalance import analyze_imbalances
 
@@ -196,9 +178,7 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 lookback=50
             )
 
-            # ============================================================
-            # ✅ SMART MONEY CONCEPT: LIQUIDITY SWEEPS
-            # ============================================================
+            # SMC: LIQUIDITY SWEEPS
             logger.debug(f"Stage 3: {symbol} - Detecting Liquidity Sweeps")
             from indicators.liquidity_sweep import analyze_liquidity_sweep
 
@@ -207,9 +187,7 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 signal_direction='UNKNOWN'
             )
 
-            # ============================================================
             # СОБИРАЕМ COMPREHENSIVE DATA
-            # ============================================================
             comprehensive_data = {
                 'symbol': symbol,
                 'candles_1h': candles_1h_raw,
@@ -221,9 +199,9 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 'correlation_data': correlation_data,
                 'volume_profile': vp_data,
                 'vp_analysis': vp_analysis,
-                'order_blocks': ob_analysis,      # ✅ ДОБАВЛЕНО
-                'imbalances': imbalance_analysis,  # ✅ ДОБАВЛЕНО
-                'liquidity_sweep': sweep_analysis, # ✅ ДОБАВЛЕНО
+                'order_blocks': ob_analysis,
+                'imbalances': imbalance_analysis,
+                'liquidity_sweep': sweep_analysis,
                 'btc_candles_1h': btc_candles_1h_raw,
                 'btc_candles_4h': btc_candles_4h_raw
             }
@@ -238,7 +216,7 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 f"liquidity_sweep={'✓' if sweep_analysis else '✗'}"
             )
 
-            # AI анализ с ПОЛНЫМИ данными
+            # AI анализ
             analysis_result = await ai_router.analyze_pair_comprehensive(
                 symbol,
                 comprehensive_data
@@ -247,7 +225,6 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
             signal_type = analysis_result.get('signal', 'NO_SIGNAL')
             confidence = analysis_result.get('confidence', 0)
 
-            # Проверка результата
             if signal_type != 'NO_SIGNAL' and confidence >= config.MIN_CONFIDENCE:
                 trading_signal = TradingSignal(
                     symbol=symbol,
@@ -304,11 +281,7 @@ async def analyze_single_pair(
         symbol: str,
         direction: str
 ) -> Optional[TradingSignal]:
-    """
-    Анализ ОДНОЙ конкретной пары с заданным направлением
-
-    ✅ ВКЛЮЧАЕТ ВСЕ SMC компоненты
-    """
+    """Анализ ОДНОЙ конкретной пары с заданным направлением"""
     from data_providers import fetch_candles, normalize_candles, get_market_snapshot
     from data_providers.bybit_client import get_session
     from ai.ai_router import AIRouter
@@ -405,7 +378,7 @@ async def analyze_single_pair(
         vp_data = calculate_volume_profile(candles_4h, num_bins=50)
         vp_analysis = analyze_volume_profile(vp_data, current_price) if vp_data else None
 
-        # ✅ SMC: Order Blocks
+        # SMC: Order Blocks
         logger.debug(f"{symbol} - Detecting Order Blocks")
         from indicators.order_blocks import analyze_order_blocks
 
@@ -416,7 +389,7 @@ async def analyze_single_pair(
             lookback=50
         )
 
-        # ✅ SMC: Imbalances
+        # SMC: Imbalances
         logger.debug(f"{symbol} - Detecting Imbalances")
         from indicators.imbalance import analyze_imbalances
 
@@ -427,7 +400,7 @@ async def analyze_single_pair(
             lookback=50
         )
 
-        # ✅ SMC: Liquidity Sweeps
+        # SMC: Liquidity Sweeps
         logger.debug(f"{symbol} - Detecting Liquidity Sweeps")
         from indicators.liquidity_sweep import analyze_liquidity_sweep
 
@@ -453,7 +426,7 @@ async def analyze_single_pair(
             'liquidity_sweep': sweep_analysis,
             'btc_candles_1h': btc_candles_1h_raw,
             'btc_candles_4h': btc_candles_4h_raw,
-            'forced_direction': direction  # ✅ Критический параметр
+            'forced_direction': direction
         }
 
         logger.info(
@@ -473,7 +446,6 @@ async def analyze_single_pair(
         signal_type = analysis_result.get('signal', 'NO_SIGNAL')
         confidence = analysis_result.get('confidence', 0)
 
-        # Проверка результата
         if signal_type != 'NO_SIGNAL' and signal_type != direction:
             logger.error(
                 f"{symbol} - AI returned {signal_type} instead of {direction} or NO_SIGNAL"
@@ -547,7 +519,9 @@ async def _load_candles(symbol: str) -> tuple:
 
 
 def _calculate_full_indicators(candles) -> Dict:
-    """Рассчитать полные индикаторы для Stage 3"""
+    """
+    ✅ ИСПРАВЛЕНО: Рассчитать полные индикаторы с проверкой длины массивов
+    """
     from indicators.ema import calculate_ema
     from indicators.rsi import calculate_rsi
     from indicators.macd import calculate_macd
@@ -577,15 +551,21 @@ def _calculate_full_indicators(candles) -> Dict:
 
         history_length = config.FINAL_INDICATORS_HISTORY
 
+        # ✅ ИСПРАВЛЕНИЕ #7: Проверяем длину массивов перед срезом
+        def safe_slice(array, length):
+            """Безопасный срез массива"""
+            actual_length = min(length, len(array))
+            return [float(x) for x in array[-actual_length:]]
+
         return {
             'current': current,
-            'ema9_history': [float(x) for x in ema9[-history_length:]],
-            'ema21_history': [float(x) for x in ema21[-history_length:]],
-            'ema50_history': [float(x) for x in ema50[-history_length:]],
-            'rsi_history': [float(x) for x in rsi[-history_length:]],
-            'macd_line_history': [float(x) for x in macd_data.line[-history_length:]],
-            'macd_histogram_history': [float(x) for x in macd_data.histogram[-history_length:]],
-            'volume_ratio_history': [float(x) for x in volume_ratios[-history_length:]]
+            'ema9_history': safe_slice(ema9, history_length),
+            'ema21_history': safe_slice(ema21, history_length),
+            'ema50_history': safe_slice(ema50, history_length),
+            'rsi_history': safe_slice(rsi, history_length),
+            'macd_line_history': safe_slice(macd_data.line, history_length),
+            'macd_histogram_history': safe_slice(macd_data.histogram, history_length),
+            'volume_ratio_history': safe_slice(volume_ratios, history_length)
         }
 
     except Exception as e:

@@ -1,12 +1,9 @@
 """
-Stage 1: SMC-Based Signal Filtering - ADAPTED FOR REAL MARKET
+Stage 1: SMC-Based Signal Filtering - FIXED VERSION
 Файл: stages/stage1_filter.py
 
-ИЗМЕНЕНИЯ:
-✅ Убрана жесткая проверка позиции OB (теперь расстояние важнее)
-✅ Снижены пороги: MIN_SCORE 40→25, MIN_DIFF 20→15
-✅ EMA только для контекста (не влияет на scoring)
-✅ Разрешены "неидеальные" сигналы с подтверждением
+✅ ИСПРАВЛЕНО:
+- Проблема #6: EMA distance используется в scoring (штрафуется overextension)
 """
 
 import logging
@@ -33,8 +30,8 @@ class SignalCandidate:
 
 async def run_stage1(
         pairs: List[str],
-        min_confidence: int = 55,  # ✅ СНИЖЕНО с 60
-        min_volume_ratio: float = 0.8  # ✅ СНИЖЕНО с 1.0
+        min_confidence: int = 55,
+        min_volume_ratio: float = 0.8
 ) -> List[SignalCandidate]:
     """Stage 1: Фильтрация пар по Smart Money Concept паттернам"""
     from data_providers import fetch_multiple_candles, normalize_candles
@@ -98,9 +95,7 @@ async def run_stage1(
 
             current_price = float(candles.closes[-1])
 
-            # ============================================================
             # SMC ANALYSIS
-            # ============================================================
             ob_analysis = analyze_order_blocks(
                 candles, current_price, signal_direction='UNKNOWN', lookback=50
             )
@@ -114,9 +109,7 @@ async def run_stage1(
             )
             sweep_analysis = analyze_liquidity_sweep(candles, signal_direction='UNKNOWN')
 
-            # ============================================================
-            # EMA CONTEXT (только для контекста, НЕ для scoring)
-            # ============================================================
+            # EMA CONTEXT
             ema50 = calculate_ema(candles.closes, config.EMA_SLOW)
             current_ema50 = float(ema50[-1])
             price_above_ema50 = current_price > current_ema50
@@ -128,9 +121,7 @@ async def run_stage1(
                 'distance_pct': distance_from_ema50
             }
 
-            # ============================================================
             # VOLUME + RSI
-            # ============================================================
             volume_analysis = analyze_volume(candles, window=config.VOLUME_WINDOW)
             if not volume_analysis:
                 stats['invalid'] += 1
@@ -143,13 +134,13 @@ async def run_stage1(
             rsi_values = calculate_rsi(candles.closes, config.RSI_PERIOD)
             current_rsi = float(rsi_values[-1])
 
-            # ✅ СМЯГЧЕНО: RSI блокировка только при ЭКСТРЕМАЛЬНЫХ значениях
+            # RSI блокировка только при ЭКСТРЕМАЛЬНЫХ значениях
             if current_rsi > 85 or current_rsi < 15:
                 stats['rsi_extreme'] += 1
                 logger.debug(f"Stage 1: {symbol} skipped - RSI extreme ({current_rsi:.1f})")
                 continue
 
-            # RSI penalty (используется в scoring)
+            # RSI penalty
             if current_rsi > 75:
                 rsi_penalty = -10
             elif current_rsi < 25:
@@ -157,9 +148,7 @@ async def run_stage1(
             else:
                 rsi_penalty = 0
 
-            # ============================================================
-            # ✅ ОПРЕДЕЛЯЕМ НАПРАВЛЕНИЕ + CONFIDENCE (АДАПТИРОВАННАЯ ЛОГИКА)
-            # ============================================================
+            # ✅ ОПРЕДЕЛЯЕМ НАПРАВЛЕНИЕ + CONFIDENCE (с EMA distance penalty)
             direction, confidence, pattern_type, rejection_reason = _determine_smc_signal_adapted(
                 ob_analysis, imbalance_analysis, sweep_analysis,
                 ema_context, current_rsi, volume_analysis, current_price, rsi_penalty
@@ -179,9 +168,7 @@ async def run_stage1(
                 logger.debug(f"Stage 1: {symbol} skipped (confidence {confidence} < {min_confidence})")
                 continue
 
-            # ============================================================
             # СОЗДАЁМ КАНДИДАТА
-            # ============================================================
             candidate = SignalCandidate(
                 symbol=symbol,
                 direction=direction,
@@ -207,9 +194,7 @@ async def run_stage1(
     candidates.sort(key=lambda x: x.confidence, reverse=True)
     total_time = time.time() - start_time
 
-    # ============================================================
     # СТАТИСТИКА
-    # ============================================================
     logger.info("=" * 70)
     logger.info("STAGE 1 (SMC-ADAPTED) COMPLETE")
     logger.info("=" * 70)
@@ -253,20 +238,11 @@ def _determine_smc_signal_adapted(
         rsi_penalty: int
 ) -> tuple[str, int, str, str]:
     """
-    ✅ АДАПТИРОВАННАЯ ЛОГИКА для реального рынка
-
-    ИЗМЕНЕНИЯ:
-    - Позиция OB: расстояние важнее "правильности" позиции
-    - Снижены пороги: MIN_SCORE 40→25, MIN_DIFF 20→15
-    - Убран EMA из scoring (только для контекста)
-    - Разрешены "неидеальные" OB с хорошим расстоянием
-
-    Returns:
-        (direction, confidence, pattern_type, rejection_reason)
+    ✅ ИСПРАВЛЕНО: EMA distance теперь используется в scoring
     """
 
-    MIN_SCORE = 25  # ✅ СНИЖЕНО с 40
-    MIN_DIFF = 15   # ✅ СНИЖЕНО с 20
+    MIN_SCORE = 25
+    MIN_DIFF = 15
 
     # ============================================================
     # БЫЧЬИ ПАТТЕРНЫ
@@ -274,15 +250,13 @@ def _determine_smc_signal_adapted(
     bullish_score = 0
     bullish_details = []
 
-    # Order Blocks - АДАПТИРОВАННАЯ ПРОВЕРКА
+    # Order Blocks
     if ob_analysis.bullish_blocks > 0:
         nearest_ob = ob_analysis.nearest_ob
 
         if nearest_ob and nearest_ob.direction == 'BULLISH':
-            # ✅ НОВАЯ ЛОГИКА: Расстояние важнее позиции
             distance = nearest_ob.distance_from_current
 
-            # Fresh OB = сильно
             if not nearest_ob.is_mitigated:
                 base_score = 35
                 bullish_details.append("Fresh Bullish OB")
@@ -290,25 +264,19 @@ def _determine_smc_signal_adapted(
                 base_score = 18
                 bullish_details.append("Mitigated Bullish OB")
 
-            # ✅ БОНУСЫ/ШТРАФЫ ЗА РАССТОЯНИЕ (вместо проверки позиции)
             if distance < 1.0:
-                # Очень близко - отлично
                 bullish_score += base_score + 10
                 bullish_details.append("OB very close (<1%)")
             elif distance < 2.5:
-                # Близко - хорошо
                 bullish_score += base_score + 5
                 bullish_details.append("OB close (<2.5%)")
             elif distance < 5.0:
-                # Средне - нормально
                 bullish_score += base_score
                 bullish_details.append(f"OB medium distance ({distance:.1f}%)")
             elif distance < 8.0:
-                # Далеко - слабо
                 bullish_score += base_score - 10
                 bullish_details.append(f"OB far ({distance:.1f}%)")
             else:
-                # Очень далеко - почти не учитываем
                 bullish_score += 5
                 bullish_details.append(f"OB too far ({distance:.1f}%)")
 
@@ -332,10 +300,22 @@ def _determine_smc_signal_adapted(
                 if sweep_data.volume_confirmation:
                     bullish_score += 5
 
-    # ✅ EMA CONTEXT (только малый бонус, не критично)
+    # ✅ ИСПРАВЛЕНО #6: EMA distance penalty (overextension)
     if ema_context['price_above_ema50']:
-        bullish_score += 3  # ✅ СНИЖЕНО с 8
+        bullish_score += 3
         bullish_details.append("Above EMA50")
+
+        # ✅ НОВОЕ: Штрафуем overextension
+        distance_pct = ema_context['distance_pct']
+        if distance_pct > 10.0:
+            bullish_score -= 15
+            bullish_details.append(f"OVEREXTENDED from EMA50 ({distance_pct:.1f}%)")
+        elif distance_pct > 5.0:
+            bullish_score -= 8
+            bullish_details.append(f"Extended from EMA50 ({distance_pct:.1f}%)")
+        elif distance_pct < 3.0:
+            bullish_score += 5
+            bullish_details.append(f"Near EMA50 ({distance_pct:.1f}%)")
 
     # RSI optimal
     if 40 <= rsi <= 70:
@@ -403,9 +383,22 @@ def _determine_smc_signal_adapted(
                 if sweep_data.volume_confirmation:
                     bearish_score += 5
 
+    # ✅ ИСПРАВЛЕНО #6: EMA distance penalty
     if not ema_context['price_above_ema50']:
-        bearish_score += 3  # ✅ СНИЖЕНО с 8
+        bearish_score += 3
         bearish_details.append("Below EMA50")
+
+        # ✅ НОВОЕ: Штрафуем overextension
+        distance_pct = ema_context['distance_pct']
+        if distance_pct > 10.0:
+            bearish_score -= 15
+            bearish_details.append(f"OVEREXTENDED from EMA50 ({distance_pct:.1f}%)")
+        elif distance_pct > 5.0:
+            bearish_score -= 8
+            bearish_details.append(f"Extended from EMA50 ({distance_pct:.1f}%)")
+        elif distance_pct < 3.0:
+            bearish_score += 5
+            bearish_details.append(f"Near EMA50 ({distance_pct:.1f}%)")
 
     if 30 <= rsi <= 60:
         bearish_score += 5
@@ -419,21 +412,18 @@ def _determine_smc_signal_adapted(
     bearish_score += rsi_penalty
 
     # ============================================================
-    # ✅ РЕШАЮЩАЯ ЛОГИКА (СМЯГЧЁННАЯ)
+    # РЕШАЮЩАЯ ЛОГИКА
     # ============================================================
 
-    # Оба направления слабые
     if bullish_score < MIN_SCORE and bearish_score < MIN_SCORE:
         return 'NONE', 0, 'NO_PATTERN', f'Both scores below minimum: L={bullish_score}, S={bearish_score}'
 
-    # Оба направления сильные (конфликт)
     if bullish_score >= MIN_SCORE and bearish_score >= MIN_SCORE:
         score_diff = abs(bullish_score - bearish_score)
         if score_diff < MIN_DIFF:
             logger.warning(f"Conflicting SMC signals: LONG={bullish_score}, SHORT={bearish_score}, diff={score_diff}")
             return 'NONE', 0, 'CONFLICTING_SIGNALS', f'Both directions strong (L:{bullish_score}, S:{bearish_score}, diff:{score_diff})'
 
-    # Одно направление явно сильнее
     if bullish_score > bearish_score:
         direction = 'LONG'
         confidence = min(95, 50 + bullish_score)

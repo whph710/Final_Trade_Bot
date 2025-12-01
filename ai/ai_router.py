@@ -1,13 +1,12 @@
 """
-AI Router
+AI Router - FIXED VERSION
 Файл: ai/ai_router.py
 
-Роутер для работы с разными AI провайдерами (DeepSeek, Claude)
-
-ИСПРАВЛЕНО:
-- Добавлена поддержка forced_direction для ручного анализа
-- _serialize_to_json() для корректной сериализации dataclass объектов
-- Улучшена обработка take_profit_levels (защита от None)
+✅ ИСПРАВЛЕНО:
+1. Добавлены SMC данные (order_blocks, imbalances, liquidity_sweep) в DeepSeek Stage 3
+2. Исправлена обрезка свечей: 200 для 1H, 100 для 4H (вместо 100/60)
+3. Добавлена _serialize_to_json() для корректной сериализации dataclass
+4. Улучшена нормализация take_profit_levels
 """
 
 import logging
@@ -52,15 +51,7 @@ class AIRouter:
         )
 
     async def _get_deepseek_client(self, stage: str) -> Optional['DeepSeekClient']:
-        """
-        Получить DeepSeek клиент для конкретного stage
-
-        Args:
-            stage: 'stage2' или 'stage3'
-
-        Returns:
-            DeepSeekClient или None
-        """
+        """Получить DeepSeek клиент для конкретного stage"""
         if stage in self.deepseek_clients:
             return self.deepseek_clients[stage]
 
@@ -89,12 +80,7 @@ class AIRouter:
             return None
 
     async def _get_claude_client(self) -> Optional['AnthropicClient']:
-        """
-        Получить Claude клиент
-
-        Returns:
-            AnthropicClient или None
-        """
+        """Получить Claude клиент"""
         if self.claude_client:
             return self.claude_client
 
@@ -123,15 +109,7 @@ class AIRouter:
             return None
 
     async def _get_provider_client(self, stage: str):
-        """
-        Получить клиент для конкретного stage
-
-        Args:
-            stage: 'stage2' или 'stage3'
-
-        Returns:
-            (provider_name: str, client: object) или (None, None)
-        """
+        """Получить клиент для конкретного stage"""
         provider = self.stage_providers.get(stage, 'deepseek')
 
         if provider == 'deepseek':
@@ -151,16 +129,7 @@ class AIRouter:
             pairs_data: List[Dict],
             max_pairs: Optional[int] = None
     ) -> List[str]:
-        """
-        Stage 2: Выбор пар через AI
-
-        Args:
-            pairs_data: Данные о парах
-            max_pairs: Максимальное количество пар
-
-        Returns:
-            Список выбранных символов
-        """
+        """Stage 2: Выбор пар через AI"""
         logger.info(
             f"Stage 2: selecting from {len(pairs_data)} pairs (limit: {max_pairs})"
         )
@@ -200,16 +169,7 @@ class AIRouter:
             symbol: str,
             comprehensive_data: Dict
     ) -> Dict:
-        """
-        Stage 3: Comprehensive analysis через AI
-
-        Args:
-            symbol: Торговая пара
-            comprehensive_data: Полные данные для анализа
-
-        Returns:
-            Результат анализа
-        """
+        """Stage 3: Comprehensive analysis через AI"""
         logger.debug(f"Stage 3: analyzing {symbol}")
 
         provider_name, client = await self._get_provider_client('stage3')
@@ -299,27 +259,18 @@ class AIRouter:
             config: Dict
     ) -> Dict:
         """
-        DeepSeek comprehensive analysis implementation
-
-        Args:
-            symbol: Торговая пара
-            comprehensive_data: Данные
-            client: DeepSeek клиент
-            config: Конфигурация (temperature, max_tokens)
-
-        Returns:
-            Результат анализа
+        ✅ ИСПРАВЛЕНО: DeepSeek comprehensive analysis с SMC данными
         """
         import json
-        from pathlib import Path
 
         try:
             from ai.deepseek_client import load_prompt_cached
+            from config import config as app_config
 
             # Загружаем промпт
             system_prompt = load_prompt_cached("prompt_analyze.txt")
 
-            # ✅ НОВОЕ: Проверяем forced_direction
+            # Проверяем forced_direction
             forced_direction = comprehensive_data.get('forced_direction')
 
             if forced_direction:
@@ -327,7 +278,6 @@ class AIRouter:
                     f"Stage 3 {symbol}: FORCED DIRECTION = {forced_direction}"
                 )
 
-                # Добавляем инструкцию в system prompt
                 direction_instruction = (
                     f"\n\n🎯 CRITICAL INSTRUCTION FOR THIS ANALYSIS:\n"
                     f"User specifically requested {forced_direction} signal analysis.\n"
@@ -339,30 +289,69 @@ class AIRouter:
                 )
                 system_prompt = system_prompt + direction_instruction
 
-            # Сериализуем данные с конвертацией dataclass → dict
+            # ============================================================
+            # ✅ ИСПРАВЛЕНИЕ #2 + #3: Правильная обрезка свечей
+            # ============================================================
+            candles_1h = comprehensive_data.get('candles_1h', [])
+            candles_4h = comprehensive_data.get('candles_4h', [])
+
+            # Используем значения из config (200 для 1H, 100 для 4H)
+            candles_1h_trimmed = candles_1h[-app_config.STAGE3_CANDLES_1H:] if candles_1h else []
+            candles_4h_trimmed = candles_4h[-app_config.STAGE3_CANDLES_4H:] if candles_4h else []
+
+            logger.debug(
+                f"Stage 3 {symbol}: Candles trimmed to "
+                f"1H={len(candles_1h_trimmed)} (target: {app_config.STAGE3_CANDLES_1H}), "
+                f"4H={len(candles_4h_trimmed)} (target: {app_config.STAGE3_CANDLES_4H})"
+            )
+
+            # ============================================================
+            # ✅ ИСПРАВЛЕНИЕ #1: Добавляем SMC данные
+            # ============================================================
             analysis_data = {
                 'symbol': symbol,
-                'candles_1h': comprehensive_data.get('candles_1h', [])[-100:],
-                'candles_4h': comprehensive_data.get('candles_4h', [])[-60:],
+                'candles_1h': candles_1h_trimmed,
+                'candles_4h': candles_4h_trimmed,
                 'indicators_1h': comprehensive_data.get('indicators_1h', {}),
                 'indicators_4h': comprehensive_data.get('indicators_4h', {}),
                 'current_price': comprehensive_data.get('current_price', 0),
                 'market_data': comprehensive_data.get('market_data', {}),
-                'correlation_data': self._serialize_to_json(comprehensive_data.get('correlation_data', {})),
-                'volume_profile': self._serialize_to_json(comprehensive_data.get('volume_profile')),
-                'vp_analysis': self._serialize_to_json(comprehensive_data.get('vp_analysis')),
+                'correlation_data': self._serialize_to_json(
+                    comprehensive_data.get('correlation_data', {})
+                ),
+                'volume_profile': self._serialize_to_json(
+                    comprehensive_data.get('volume_profile')
+                ),
+                'vp_analysis': self._serialize_to_json(
+                    comprehensive_data.get('vp_analysis')
+                ),
+
+                # ✅ ДОБАВЛЕНО: SMC данные
+                'order_blocks': self._serialize_to_json(
+                    comprehensive_data.get('order_blocks')
+                ),
+                'imbalances': self._serialize_to_json(
+                    comprehensive_data.get('imbalances')
+                ),
+                'liquidity_sweep': self._serialize_to_json(
+                    comprehensive_data.get('liquidity_sweep')
+                ),
+
                 'btc_candles_1h': comprehensive_data.get('btc_candles_1h', [])[-100:],
                 'btc_candles_4h': comprehensive_data.get('btc_candles_4h', [])[-60:]
             }
 
-            # ✅ Добавляем forced_direction в данные для AI (если есть)
+            # Добавляем forced_direction если есть
             if forced_direction:
                 analysis_data['forced_direction'] = forced_direction
 
             data_json = json.dumps(analysis_data, separators=(',', ':'))
 
             logger.debug(
-                f"Stage 3 {symbol}: analysis data size = {len(data_json)} chars"
+                f"Stage 3 {symbol}: analysis data size = {len(data_json)} chars "
+                f"(SMC included: OB={'✓' if comprehensive_data.get('order_blocks') else '✗'}, "
+                f"FVG={'✓' if comprehensive_data.get('imbalances') else '✗'}, "
+                f"Sweep={'✓' if comprehensive_data.get('liquidity_sweep') else '✗'})"
             )
 
             # Формируем промпт
@@ -395,7 +384,7 @@ class AIRouter:
 
             result['symbol'] = symbol
 
-            # ✅ УЛУЧШЕННАЯ нормализация take_profit_levels
+            # Нормализация take_profit_levels
             result = self._normalize_take_profit_levels(result, symbol)
 
             return result
@@ -412,16 +401,7 @@ class AIRouter:
             }
 
     def _normalize_take_profit_levels(self, result: Dict, symbol: str) -> Dict:
-        """
-        ✅ НОВАЯ ФУНКЦИЯ: Нормализация take_profit_levels с защитой от None и неправильных типов
-
-        Args:
-            result: Результат от AI
-            symbol: Символ (для логирования)
-
-        Returns:
-            result с нормализованным take_profit_levels
-        """
+        """Нормализация take_profit_levels с защитой от None"""
         try:
             tp_levels = result.get('take_profit_levels')
             entry_price = result.get('entry_price', 0)
@@ -431,19 +411,18 @@ class AIRouter:
                 logger.warning(f"{symbol}: take_profit_levels is None, generating defaults")
                 if entry_price > 0:
                     result['take_profit_levels'] = [
-                        entry_price * 1.02,  # TP1 = +2%
-                        entry_price * 1.04,  # TP2 = +4%
-                        entry_price * 1.06   # TP3 = +6%
+                        entry_price * 1.02,
+                        entry_price * 1.04,
+                        entry_price * 1.06
                     ]
                 else:
                     result['take_profit_levels'] = [0, 0, 0]
                 return result
 
-            # Случай 2: Не список (может быть число, строка и т.д.)
+            # Случай 2: Не список
             if not isinstance(tp_levels, list):
                 logger.warning(f"{symbol}: take_profit_levels is not list ({type(tp_levels)}), converting")
                 try:
-                    # Пытаемся конвертировать в float
                     single_tp = float(tp_levels)
                     result['take_profit_levels'] = [
                         single_tp,
@@ -451,8 +430,6 @@ class AIRouter:
                         single_tp * 1.2
                     ]
                 except (ValueError, TypeError):
-                    # Не удалось конвертировать - генерируем дефолты
-                    logger.warning(f"{symbol}: Could not convert tp_levels to float, using defaults")
                     if entry_price > 0:
                         result['take_profit_levels'] = [
                             entry_price * 1.02,
@@ -463,11 +440,10 @@ class AIRouter:
                         result['take_profit_levels'] = [0, 0, 0]
                 return result
 
-            # Случай 3: Список, но меньше 3 элементов
+            # Случай 3: Список меньше 3 элементов
             if len(tp_levels) < 3:
                 logger.debug(f"{symbol}: take_profit_levels has {len(tp_levels)} elements, extending to 3")
 
-                # Фильтруем None и конвертируем в float
                 valid_tps = []
                 for tp in tp_levels:
                     if tp is not None:
@@ -476,14 +452,12 @@ class AIRouter:
                         except (ValueError, TypeError):
                             pass
 
-                # Если есть хоть один валидный TP - используем его
                 if valid_tps:
                     while len(valid_tps) < 3:
                         last_tp = valid_tps[-1]
                         valid_tps.append(last_tp * 1.1)
                     result['take_profit_levels'] = valid_tps
                 else:
-                    # Нет валидных TP - генерируем дефолты
                     if entry_price > 0:
                         result['take_profit_levels'] = [
                             entry_price * 1.02,
@@ -496,10 +470,9 @@ class AIRouter:
 
             # Случай 4: Список из 3+ элементов - проверяем на None
             cleaned_tps = []
-            for tp in tp_levels[:3]:  # Берём первые 3
+            for tp in tp_levels[:3]:
                 if tp is None:
                     logger.warning(f"{symbol}: Found None in take_profit_levels")
-                    # Если есть предыдущий TP - используем его * 1.1, иначе используем entry_price
                     if cleaned_tps:
                         cleaned_tps.append(cleaned_tps[-1] * 1.1)
                     elif entry_price > 0:
@@ -521,43 +494,35 @@ class AIRouter:
 
         except Exception as e:
             logger.error(f"{symbol}: Error normalizing take_profit_levels: {e}")
-            # В случае любой ошибки - возвращаем безопасные дефолты
             result['take_profit_levels'] = [0, 0, 0]
             return result
 
     def _serialize_to_json(self, obj):
         """
-        Рекурсивно конвертирует dataclass объекты в dict для JSON сериализации
-
-        Args:
-            obj: Любой объект (может быть dataclass, dict, list, примитив)
-
-        Returns:
-            JSON-сериализуемый объект
+        ✅ ИСПРАВЛЕНИЕ #4: Рекурсивная сериализация dataclass → dict
         """
         if obj is None:
             return None
 
-        # Если это dataclass - конвертируем в dict
+        # Dataclass → dict
         if is_dataclass(obj):
             return asdict(obj)
 
-        # Если это dict - рекурсивно обрабатываем значения
+        # Dict → рекурсивно
         if isinstance(obj, dict):
             return {k: self._serialize_to_json(v) for k, v in obj.items()}
 
-        # Если это list/tuple - рекурсивно обрабатываем элементы
+        # List/Tuple → рекурсивно
         if isinstance(obj, (list, tuple)):
             return [self._serialize_to_json(item) for item in obj]
 
-        # Примитивы (str, int, float, bool) возвращаем как есть
+        # Примитивы
         return obj
 
     def _extract_json_from_response(self, text: str) -> Optional[Dict]:
-        """Извлечь JSON из ответа (используем метод из AnthropicClient)"""
+        """Извлечь JSON из ответа"""
         from ai.anthropic_client import AnthropicClient
 
-        # Используем метод из AnthropicClient
         temp_client = type('obj', (object,), {
             '_extract_json_from_response': AnthropicClient._extract_json_from_response
         })()
