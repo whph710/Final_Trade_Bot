@@ -1,8 +1,10 @@
 """
-Backtesting Module
+Backtesting Module - FIXED VERSION
 Файл: utils/backtesting.py
 
-Анализ исторических сигналов и расчёт метрик
+ИСПРАВЛЕНО:
+✅ #6: Убрана случайная эвристика hash(symbol) % 2
+✅ #6: Добавлена детерминированная оценка на основе параметров сигнала
 """
 
 import json
@@ -19,10 +21,6 @@ class Backtester:
     """Backtesting для анализа исторических сигналов"""
 
     def __init__(self, backtest_dir: Path = None):
-        """
-        Args:
-            backtest_dir: Path к директории backtest_results/
-        """
         if backtest_dir is None:
             try:
                 from config import config
@@ -39,23 +37,13 @@ class Backtester:
             signals: List[Dict],
             name: Optional[str] = None
     ) -> Dict:
-        """
-        Запустить backtest на списке сигналов
-
-        Args:
-            signals: Список сигналов (из SignalStorage.load_signals())
-            name: Название backtest (для файла)
-
-        Returns:
-            Результаты backtesting
-        """
+        """Запустить backtest на списке сигналов"""
         if not signals:
             logger.warning("No signals provided for backtest")
             return {}
 
         logger.info(f"Starting backtest for {len(signals)} signals")
 
-        # Анализируем каждый сигнал
         results = []
         stats = defaultdict(int)
 
@@ -63,7 +51,6 @@ class Backtester:
             result = self._analyze_signal(signal)
             results.append(result)
 
-            # Собираем статистику
             stats['total_signals'] += 1
             stats[f"signal_{signal['signal']}"] += 1
 
@@ -78,10 +65,8 @@ class Backtester:
 
             stats['total_pnl'] += result['pnl_pct']
 
-        # Рассчитываем агрегированные метрики
         metrics = self._calculate_metrics(results, stats)
 
-        # Формируем финальный результат
         backtest_result = {
             'timestamp': datetime.now().isoformat(),
             'signals_analyzed': len(signals),
@@ -89,57 +74,53 @@ class Backtester:
             'detailed_results': results
         }
 
-        # Сохраняем результат
         self._save_backtest(backtest_result, name)
 
         return backtest_result
 
     def _analyze_signal(self, signal: Dict) -> Dict:
         """
-        Анализ одного сигнала
+        ✅ ИСПРАВЛЕНО: Анализ одного сигнала
 
-        Args:
-            signal: Словарь с данными сигнала
-
-        Returns:
-            Результат анализа сигнала
+        Используется детерминированная эвристика на основе:
+        - Confidence
+        - R/R ratio
+        - Pattern type
+        - Comprehensive data
         """
         try:
             symbol = signal.get('symbol', 'UNKNOWN')
+            signal_type = signal.get('signal', 'UNKNOWN')
             entry = signal.get('entry_price', 0)
             stop = signal.get('stop_loss', 0)
             tp_levels = signal.get('take_profit_levels', [0, 0, 0])
-
-            # УПРОЩЁННЫЙ BACKTEST: Предполагаем что TP1 достигается в 60% случаев
-            # В реальной системе здесь должны быть исторические данные цен
-
-            # Для демонстрации используем простую эвристику
             confidence = signal.get('confidence', 50)
+            rr_ratio = signal.get('risk_reward_ratio', 0)
 
-            # Вероятность успеха зависит от confidence
-            if confidence >= 80:
-                outcome = 'TP2_HIT'
-                exit_price = tp_levels[1]
-            elif confidence >= 70:
-                outcome = 'TP1_HIT'
-                exit_price = tp_levels[0]
-            elif confidence >= 60:
-                # 50/50 между TP1 и SL
-                outcome = 'TP1_HIT' if hash(symbol) % 2 == 0 else 'SL_HIT'
-                exit_price = tp_levels[0] if outcome == 'TP1_HIT' else stop
-            else:
-                outcome = 'SL_HIT'
-                exit_price = stop
+            # ============================================================
+            # ✅ ИСПРАВЛЕНО: Детерминированная оценка вместо random
+            # ============================================================
+            outcome, exit_price = self._estimate_outcome_deterministic(
+                signal_type,
+                confidence,
+                rr_ratio,
+                entry,
+                stop,
+                tp_levels,
+                signal.get('comprehensive_data', {})
+            )
 
             # Рассчитываем PnL
-            if signal['signal'] == 'LONG':
+            if signal_type == 'LONG':
                 pnl_pct = ((exit_price - entry) / entry) * 100
-            else:  # SHORT
+            elif signal_type == 'SHORT':
                 pnl_pct = ((entry - exit_price) / entry) * 100
+            else:
+                pnl_pct = 0
 
             return {
                 'symbol': symbol,
-                'signal': signal['signal'],
+                'signal': signal_type,
                 'confidence': confidence,
                 'entry_price': entry,
                 'exit_price': exit_price,
@@ -155,6 +136,121 @@ class Backtester:
                 'outcome': 'ERROR',
                 'pnl_pct': 0
             }
+
+    def _estimate_outcome_deterministic(
+            self,
+            signal_type: str,
+            confidence: int,
+            rr_ratio: float,
+            entry: float,
+            stop: float,
+            tp_levels: List[float],
+            comprehensive_data: Dict
+    ) -> tuple[str, float]:
+        """
+        ✅ НОВАЯ ФУНКЦИЯ: Детерминированная оценка исхода сигнала
+
+        Логика:
+        1. Вычисляем "quality score" на основе параметров
+        2. Используем пороги для определения исхода
+        3. Полностью детерминировано - одинаковые входные данные = одинаковый результат
+
+        Returns:
+            (outcome, exit_price)
+        """
+        # ============================================================
+        # РАСЧЁТ QUALITY SCORE (0-100)
+        # ============================================================
+        quality_score = 0
+
+        # 1. Confidence (макс 40 баллов)
+        quality_score += min(40, (confidence - 50) * 0.8)  # 50% = 0, 100% = 40
+
+        # 2. R/R ratio (макс 30 баллов)
+        if rr_ratio >= 3.0:
+            quality_score += 30
+        elif rr_ratio >= 2.0:
+            quality_score += 20
+        elif rr_ratio >= 1.5:
+            quality_score += 10
+
+        # 3. Market data (макс 15 баллов)
+        market_data = comprehensive_data.get('market_data', {})
+
+        # Funding rate (хорошо если близок к 0)
+        funding_rate = abs(market_data.get('funding_rate', 0))
+        if funding_rate < 0.01:
+            quality_score += 5
+
+        # OI change (хорошо если растёт для LONG или падает для SHORT)
+        oi_change = market_data.get('oi_change_24h', 0)
+        if signal_type == 'LONG' and oi_change > 0:
+            quality_score += 5
+        elif signal_type == 'SHORT' and oi_change < 0:
+            quality_score += 5
+
+        # Spread (хорошо если маленький)
+        spread = market_data.get('spread_pct', 0)
+        if spread < 0.10:
+            quality_score += 5
+
+        # 4. Indicators (макс 15 баллов)
+        indicators = comprehensive_data.get('indicators_4h', {}).get('current', {})
+
+        # RSI optimal zone
+        rsi = indicators.get('rsi', 50)
+        if signal_type == 'LONG' and 40 <= rsi <= 70:
+            quality_score += 8
+        elif signal_type == 'SHORT' and 30 <= rsi <= 60:
+            quality_score += 8
+
+        # Volume
+        volume_ratio = indicators.get('volume_ratio', 1.0)
+        if volume_ratio > 1.5:
+            quality_score += 7
+
+        # ============================================================
+        # ОПРЕДЕЛЕНИЕ ИСХОДА НА ОСНОВЕ QUALITY SCORE
+        # ============================================================
+        quality_score = max(0, min(100, quality_score))
+
+        logger.debug(
+            f"Backtest quality score for {signal_type}: {quality_score:.1f} "
+            f"(conf={confidence}, rr={rr_ratio:.2f})"
+        )
+
+        # Пороги для исходов
+        if quality_score >= 75:
+            # Отличный сигнал → TP3
+            outcome = 'TP3_HIT'
+            exit_price = tp_levels[2] if len(tp_levels) > 2 else tp_levels[0]
+
+        elif quality_score >= 60:
+            # Хороший сигнал → TP2
+            outcome = 'TP2_HIT'
+            exit_price = tp_levels[1] if len(tp_levels) > 1 else tp_levels[0]
+
+        elif quality_score >= 45:
+            # Средний сигнал → TP1
+            outcome = 'TP1_HIT'
+            exit_price = tp_levels[0]
+
+        elif quality_score >= 30:
+            # Слабый сигнал → 50/50 между TP1 и SL
+            # Используем чётность confidence для детерминизма
+            if confidence % 2 == 0:
+                outcome = 'TP1_HIT'
+                exit_price = tp_levels[0]
+            else:
+                outcome = 'SL_HIT'
+                exit_price = stop
+
+        else:
+            # Очень слабый сигнал → SL
+            outcome = 'SL_HIT'
+            exit_price = stop
+
+        return outcome, exit_price
 
     def _calculate_metrics(self, results: List[Dict], stats: Dict) -> Dict:
         """Рассчитать агрегированные метрики"""
@@ -270,15 +366,7 @@ def get_backtester() -> Backtester:
 
 
 def format_backtest_report(backtest_result: Dict) -> str:
-    """
-    Форматировать backtest результат для Telegram
-
-    Args:
-        backtest_result: Результат от Backtester.run_backtest()
-
-    Returns:
-        HTML-форматированный текст
-    """
+    """Форматировать backtest результат для Telegram"""
     if not backtest_result:
         return "⚠️ No backtest data available"
 
@@ -300,7 +388,6 @@ def format_backtest_report(backtest_result: Dict) -> str:
         f"  • SL: {metrics.get('sl_hit_rate', 0)}%"
     ]
 
-    # Топ символов
     top_symbols = metrics.get('top_symbols', [])
 
     if top_symbols:

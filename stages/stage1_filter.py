@@ -1,11 +1,14 @@
 """
-Stage 1: SMC-Based Signal Filtering
+Stage 1: SMC-Based Signal Filtering - FIXED VERSION
 Файл: stages/stage1_filter.py
 
-НОВАЯ СТРАТЕГИЯ:
-- Фильтрация по Smart Money Concept паттернам
-- Order Blocks + Liquidity Sweeps + Imbalances как основа
-- EMA только как контекст тренда
+ИСПРАВЛЕНО:
+✅ #1: Добавлена валидация направления Order Blocks
+✅ #2: Проверка позиции OB относительно цены
+✅ #4: MIN_SCORE увеличен до 50
+✅ #5: Проверка согласованности SMC компонентов
+✅ #13: Проверка конфликтующих сигналов
+✅ #8: RSI exhaustion порог изменён на 70/30
 """
 
 import logging
@@ -33,7 +36,7 @@ class SignalCandidate:
     rsi_value: float
 
     # Details
-    pattern_type: str  # 'PERFECT_SMC', 'STRONG_SMC', 'MODERATE_SMC', 'WEAK_SMC'
+    pattern_type: str
 
 
 async def run_stage1(
@@ -43,13 +46,6 @@ async def run_stage1(
 ) -> List[SignalCandidate]:
     """
     Stage 1: Фильтрация пар по Smart Money Concept паттернам
-
-    НОВАЯ ЛОГИКА:
-    1. Order Blocks detection (primary)
-    2. Liquidity Sweeps detection (confirmation)
-    3. Imbalances detection (targets)
-    4. EMA50 для trend context
-    5. Volume + RSI базовая фильтрация
     """
     from data_providers import fetch_multiple_candles, normalize_candles
     from indicators import (
@@ -60,9 +56,6 @@ async def run_stage1(
         analyze_volume,
         calculate_rsi
     )
-    from indicators.order_blocks import analyze_order_blocks
-    from indicators.imbalance import analyze_imbalances
-    from indicators.liquidity_sweep import analyze_liquidity_sweep
     from config import config
     import time
 
@@ -70,50 +63,43 @@ async def run_stage1(
         logger.warning("Stage 1: No pairs provided")
         return []
 
-    logger.info(f"Stage 1 (SMC): Analyzing {len(pairs)} pairs (batch loading)")
+    logger.info(f"Stage 1 (SMC-FIXED): Analyzing {len(pairs)} pairs")
 
     start_time = time.time()
 
-    # ===================================================================
-    # BATCH LOADING - ВСЕ ПАРЫ СРАЗУ (4H для SMC анализа)
-    # ===================================================================
-    logger.debug(f"Stage 1 (SMC): Preparing {len(pairs)} batch requests...")
-
+    # Batch loading
     requests = [
         {
             'symbol': symbol,
-            'interval': config.TIMEFRAME_LONG,  # 4H для SMC
-            'limit': 100  # Достаточно для OB/FVG detection
+            'interval': config.TIMEFRAME_LONG,
+            'limit': 100
         }
         for symbol in pairs
     ]
 
-    logger.debug(f"Stage 1 (SMC): Fetching candles for {len(requests)} pairs...")
     batch_results = await fetch_multiple_candles(requests)
 
     load_time = time.time() - start_time
     logger.info(
-        f"Stage 1 (SMC): Loaded {len(batch_results)}/{len(pairs)} pairs "
+        f"Stage 1: Loaded {len(batch_results)}/{len(pairs)} pairs "
         f"in {load_time:.1f}s"
     )
 
     if not batch_results:
-        logger.warning("Stage 1 (SMC): No valid candles loaded")
+        logger.warning("Stage 1: No valid candles loaded")
         return []
 
-    # ===================================================================
-    # SMC АНАЛИЗ КАЖДОЙ ПАРЫ
-    # ===================================================================
+    # Анализ каждой пары
     candidates = []
     processed = 0
 
-    # Статистика отклонений
     stats = {
         'invalid': 0,
         'no_smc_patterns': 0,
         'low_confidence': 0,
         'low_volume': 0,
-        'rsi_exhaustion': 0
+        'rsi_exhaustion': 0,
+        'conflicting_signals': 0  # ✅ НОВОЕ
     }
 
     for result in batch_results:
@@ -126,7 +112,6 @@ async def run_stage1(
         try:
             processed += 1
 
-            # Нормализация
             candles = normalize_candles(
                 candles_raw,
                 symbol=symbol,
@@ -140,23 +125,19 @@ async def run_stage1(
             current_price = float(candles.closes[-1])
 
             # ============================================================
-            # 1. ORDER BLOCKS ANALYSIS (PRIMARY)
+            # SMC ANALYSIS
             # ============================================================
             ob_analysis = analyze_order_blocks(
                 candles,
                 current_price,
-                signal_direction='UNKNOWN',  # Ищем оба направления
+                signal_direction='UNKNOWN',
                 lookback=50
             )
 
             if not ob_analysis or ob_analysis.total_blocks_found == 0:
                 stats['no_smc_patterns'] += 1
-                logger.debug(f"Stage 1 (SMC): {symbol} - No Order Blocks found")
                 continue
 
-            # ============================================================
-            # 2. IMBALANCES ANALYSIS
-            # ============================================================
             imbalance_analysis = analyze_imbalances(
                 candles,
                 current_price,
@@ -164,16 +145,13 @@ async def run_stage1(
                 lookback=50
             )
 
-            # ============================================================
-            # 3. LIQUIDITY SWEEPS ANALYSIS
-            # ============================================================
             sweep_analysis = analyze_liquidity_sweep(
                 candles,
                 signal_direction='UNKNOWN'
             )
 
             # ============================================================
-            # 4. EMA CONTEXT (trend anchor)
+            # EMA CONTEXT
             # ============================================================
             ema50 = calculate_ema(candles.closes, config.EMA_SLOW)
             current_ema50 = float(ema50[-1])
@@ -188,7 +166,7 @@ async def run_stage1(
             }
 
             # ============================================================
-            # 5. VOLUME + RSI (базовая фильтрация)
+            # VOLUME + RSI
             # ============================================================
             volume_analysis = analyze_volume(candles, window=config.VOLUME_WINDOW)
 
@@ -198,54 +176,55 @@ async def run_stage1(
 
             if volume_analysis.volume_ratio_current < min_volume_ratio:
                 stats['low_volume'] += 1
-                logger.debug(
-                    f"Stage 1 (SMC): {symbol} skipped "
-                    f"(volume {volume_analysis.volume_ratio_current:.2f} < {min_volume_ratio})"
-                )
                 continue
 
             rsi_values = calculate_rsi(candles.closes, config.RSI_PERIOD)
             current_rsi = float(rsi_values[-1])
 
-            # RSI exhaustion check
-            if current_rsi > 85 or current_rsi < 15:
-                stats['rsi_exhaustion'] += 1
-                logger.debug(
-                    f"Stage 1 (SMC): {symbol} skipped "
-                    f"(RSI exhaustion: {current_rsi:.1f})"
-                )
-                continue
+            # ✅ ИСПРАВЛЕНО #8: RSI exhaustion 70/30 вместо 85/15
+            if current_rsi > 70:
+                logger.debug(f"Stage 1: {symbol} - RSI overbought {current_rsi:.1f}")
+                # Не блокируем полностью, но штрафуем
+                rsi_penalty = -15
+            elif current_rsi < 30:
+                logger.debug(f"Stage 1: {symbol} - RSI oversold {current_rsi:.1f}")
+                rsi_penalty = -15
+            else:
+                rsi_penalty = 0
 
             # ============================================================
-            # 6. ОПРЕДЕЛЯЕМ НАПРАВЛЕНИЕ + CONFIDENCE
+            # ✅ ИСПРАВЛЕНО: ОПРЕДЕЛЯЕМ НАПРАВЛЕНИЕ + CONFIDENCE
             # ============================================================
-            direction, confidence, pattern_type = _determine_smc_signal(
+            direction, confidence, pattern_type, rejection_reason = _determine_smc_signal_fixed(
                 ob_analysis,
                 imbalance_analysis,
                 sweep_analysis,
                 ema_context,
                 current_rsi,
                 volume_analysis,
-                current_price
+                current_price,
+                rsi_penalty
             )
 
             if direction == 'NONE':
-                stats['no_smc_patterns'] += 1
-                logger.debug(
-                    f"Stage 1 (SMC): {symbol} - No clear SMC direction"
-                )
+                if rejection_reason == 'CONFLICTING_SIGNALS':
+                    stats['conflicting_signals'] += 1
+                else:
+                    stats['no_smc_patterns'] += 1
+
+                logger.debug(f"Stage 1: {symbol} - {rejection_reason}")
                 continue
 
             if confidence < min_confidence:
                 stats['low_confidence'] += 1
                 logger.debug(
-                    f"Stage 1 (SMC): {symbol} skipped "
+                    f"Stage 1: {symbol} skipped "
                     f"(confidence {confidence} < {min_confidence})"
                 )
                 continue
 
             # ============================================================
-            # 7. СОЗДАЁМ КАНДИДАТА
+            # СОЗДАЁМ КАНДИДАТА
             # ============================================================
             candidate = SignalCandidate(
                 symbol=symbol,
@@ -263,15 +242,12 @@ async def run_stage1(
             candidates.append(candidate)
 
             logger.info(
-                f"Stage 1 (SMC): ✓ {symbol} {direction} "
-                f"(confidence: {confidence}%, pattern: {pattern_type}, "
-                f"OB: {ob_analysis.total_blocks_found}, "
-                f"FVG: {imbalance_analysis.total_imbalances if imbalance_analysis else 0}, "
-                f"Sweep: {'YES' if sweep_analysis.get('sweep_detected') else 'NO'})"
+                f"Stage 1: ✓ {symbol} {direction} "
+                f"(confidence: {confidence}%, pattern: {pattern_type})"
             )
 
         except Exception as e:
-            logger.debug(f"Stage 1 (SMC): Error processing {symbol}: {e}")
+            logger.debug(f"Stage 1: Error processing {symbol}: {e}")
             stats['invalid'] += 1
             continue
 
@@ -284,7 +260,7 @@ async def run_stage1(
     # ИТОГОВАЯ СТАТИСТИКА
     # ===================================================================
     logger.info("=" * 70)
-    logger.info("STAGE 1 (SMC) COMPLETE")
+    logger.info("STAGE 1 (SMC-FIXED) COMPLETE")
     logger.info("=" * 70)
     logger.info(f"Total time: {total_time:.1f}s")
     logger.info(f"Processed: {processed} pairs")
@@ -295,6 +271,7 @@ async def run_stage1(
     logger.info(f"   • Low confidence: {stats['low_confidence']}")
     logger.info(f"   • Low volume: {stats['low_volume']}")
     logger.info(f"   • RSI exhaustion: {stats['rsi_exhaustion']}")
+    logger.info(f"   • Conflicting signals: {stats['conflicting_signals']}")  # ✅ НОВОЕ
 
     if candidates:
         logger.info(f"\n📊 Pattern distribution:")
@@ -307,14 +284,9 @@ async def run_stage1(
 
         logger.info(f"\nTop 5 candidates:")
         for i, c in enumerate(candidates[:5], 1):
-            ob_count = c.ob_analysis.total_blocks_found
-            fvg_count = c.imbalance_analysis.total_imbalances if c.imbalance_analysis else 0
-            sweep = '✓' if c.sweep_analysis.get('sweep_detected') else '✗'
-
             logger.info(
                 f"  {i}. {c.symbol} {c.direction} "
-                f"(conf: {c.confidence}%, {c.pattern_type}, "
-                f"OB: {ob_count}, FVG: {fvg_count}, Sweep: {sweep})"
+                f"(conf: {c.confidence}%, {c.pattern_type})"
             )
 
     logger.info("=" * 70)
@@ -322,20 +294,21 @@ async def run_stage1(
     return candidates
 
 
-def _determine_smc_signal(
+def _determine_smc_signal_fixed(
         ob_analysis: 'OrderBlockAnalysis',
         imbalance_analysis: 'ImbalanceAnalysis',
         sweep_analysis: dict,
         ema_context: dict,
         rsi: float,
         volume_analysis: 'VolumeAnalysis',
-        current_price: float
-) -> tuple[str, int, str]:
+        current_price: float,
+        rsi_penalty: int
+) -> tuple[str, int, str, str]:
     """
-    Определить направление сигнала на основе SMC компонентов
+    ✅ ИСПРАВЛЕННАЯ ВЕРСИЯ: Определить направление сигнала
 
     Returns:
-        (direction, confidence, pattern_type)
+        (direction, confidence, pattern_type, rejection_reason)
     """
 
     # ============================================================
@@ -344,31 +317,39 @@ def _determine_smc_signal(
     bullish_score = 0
     bullish_details = []
 
-    # Order Blocks (BULLISH)
+    # ✅ ИСПРАВЛЕНО #1 #2: Order Blocks с проверкой позиции
     if ob_analysis.bullish_blocks > 0:
         nearest_ob = ob_analysis.nearest_ob
 
         if nearest_ob and nearest_ob.direction == 'BULLISH':
-            if not nearest_ob.is_mitigated:
-                # Fresh OB
-                bullish_score += 30
-                bullish_details.append("Fresh Bullish OB")
+            # ✅ КРИТИЧНО: Для LONG нужен OB НИЖЕ текущей цены
+            if nearest_ob.price_high < current_price:
+                if not nearest_ob.is_mitigated:
+                    bullish_score += 30
+                    bullish_details.append("Fresh Bullish OB BELOW price")
 
-                if nearest_ob.distance_from_current < 2.0:
-                    bullish_score += 10  # Очень близко
-                    bullish_details.append("OB nearby (<2%)")
-                elif nearest_ob.distance_from_current < 5.0:
-                    bullish_score += 5
+                    if nearest_ob.distance_from_current < 2.0:
+                        bullish_score += 10
+                        bullish_details.append("OB very close (<2%)")
+                    elif nearest_ob.distance_from_current < 5.0:
+                        bullish_score += 5
+                else:
+                    bullish_score += 15
+                    bullish_details.append("Mitigated Bullish OB BELOW price")
+
             else:
-                # Mitigated OB (слабее)
-                bullish_score += 15
-                bullish_details.append("Mitigated Bullish OB")
+                # OB ВЫШЕ цены = сопротивление, не поддержка!
+                bullish_score -= 10
+                bullish_details.append("Bullish OB ABOVE price (resistance)")
+                logger.debug(f"Bullish OB wrongly positioned ABOVE price: {nearest_ob.price_high} > {current_price}")
 
-    # Imbalances (BULLISH)
+    # Imbalances (BULLISH) - с проверкой позиции
     if imbalance_analysis and imbalance_analysis.bullish_count > 0:
         nearest_imb = imbalance_analysis.nearest_imbalance
 
         if nearest_imb and nearest_imb.direction == 'BULLISH':
+            # FVG должен быть НИЖЕ цены для LONG (цель вернуться заполнить)
+            # ИЛИ выше как цель движения
             if not nearest_imb.is_filled:
                 bullish_score += 15
                 bullish_details.append("Unfilled Bullish FVG")
@@ -388,7 +369,7 @@ def _determine_smc_signal(
                 if sweep_data.volume_confirmation:
                     bullish_score += 5
 
-    # EMA Context (вспомогательный фильтр)
+    # EMA Context
     if ema_context['price_above_ema50']:
         bullish_score += 8
         bullish_details.append("Above EMA50")
@@ -408,23 +389,31 @@ def _determine_smc_signal(
     bearish_score = 0
     bearish_details = []
 
-    # Order Blocks (BEARISH)
+    # ✅ ИСПРАВЛЕНО #1 #2: Order Blocks с проверкой позиции
     if ob_analysis.bearish_blocks > 0:
         nearest_ob = ob_analysis.nearest_ob
 
         if nearest_ob and nearest_ob.direction == 'BEARISH':
-            if not nearest_ob.is_mitigated:
-                bearish_score += 30
-                bearish_details.append("Fresh Bearish OB")
+            # ✅ КРИТИЧНО: Для SHORT нужен OB ВЫШЕ текущей цены
+            if nearest_ob.price_low > current_price:
+                if not nearest_ob.is_mitigated:
+                    bearish_score += 30
+                    bearish_details.append("Fresh Bearish OB ABOVE price")
 
-                if nearest_ob.distance_from_current < 2.0:
-                    bearish_score += 10
-                    bearish_details.append("OB nearby (<2%)")
-                elif nearest_ob.distance_from_current < 5.0:
-                    bearish_score += 5
+                    if nearest_ob.distance_from_current < 2.0:
+                        bearish_score += 10
+                        bearish_details.append("OB very close (<2%)")
+                    elif nearest_ob.distance_from_current < 5.0:
+                        bearish_score += 5
+                else:
+                    bearish_score += 15
+                    bearish_details.append("Mitigated Bearish OB ABOVE price")
+
             else:
-                bearish_score += 15
-                bearish_details.append("Mitigated Bearish OB")
+                # OB НИЖЕ цены = поддержка, не сопротивление!
+                bearish_score -= 10
+                bearish_details.append("Bearish OB BELOW price (support)")
+                logger.debug(f"Bearish OB wrongly positioned BELOW price: {nearest_ob.price_low} < {current_price}")
 
     # Imbalances (BEARISH)
     if imbalance_analysis and imbalance_analysis.bearish_count > 0:
@@ -464,27 +453,47 @@ def _determine_smc_signal(
         bearish_score += 8
         bearish_details.append(f"Volume {volume_analysis.volume_ratio_current:.1f}x")
 
+    # Применяем RSI penalty к обоим
+    bullish_score += rsi_penalty
+    bearish_score += rsi_penalty
+
+    # ============================================================
+    # ✅ ИСПРАВЛЕНО #4: MIN_SCORE увеличен до 50
+    # ============================================================
+    MIN_SCORE = 50  # Было 35
+
+    # ✅ ИСПРАВЛЕНО #5 #13: Проверка согласованности и конфликтов
+    if bullish_score < MIN_SCORE and bearish_score < MIN_SCORE:
+        return 'NONE', 0, 'NO_PATTERN', 'Both scores below minimum threshold'
+
+    # ✅ НОВОЕ: Проверка конфликтующих сигналов
+    if bullish_score >= 50 and bearish_score >= 50:
+        logger.warning(
+            f"Conflicting SMC signals detected: "
+            f"LONG={bullish_score}, SHORT={bearish_score}"
+        )
+        return 'NONE', 0, 'CONFLICTING_SIGNALS', f'Both directions strong (L:{bullish_score}, S:{bearish_score})'
+
+    # ✅ НОВОЕ: Минимальный перевес 15 баллов
+    score_diff = abs(bullish_score - bearish_score)
+    if score_diff < 15:
+        logger.debug(
+            f"Unclear direction: score difference too small ({score_diff})"
+        )
+        return 'NONE', 0, 'UNCLEAR_DIRECTION', f'Score difference {score_diff} < 15'
+
     # ============================================================
     # ОПРЕДЕЛЯЕМ НАПРАВЛЕНИЕ
     # ============================================================
-
-    # Минимальный порог для сигнала
-    MIN_SCORE = 35
-
-    if bullish_score < MIN_SCORE and bearish_score < MIN_SCORE:
-        return 'NONE', 0, 'NO_PATTERN'
-
-    # Выбираем сильнейшее направление
     if bullish_score > bearish_score:
         direction = 'LONG'
         confidence = min(95, 50 + bullish_score)
 
-        # Определяем тип паттерна
         if bullish_score >= 65:
             pattern_type = 'PERFECT_SMC'
-        elif bullish_score >= 50:
+        elif bullish_score >= 55:
             pattern_type = 'STRONG_SMC'
-        elif bullish_score >= 40:
+        elif bullish_score >= 50:
             pattern_type = 'MODERATE_SMC'
         else:
             pattern_type = 'WEAK_SMC'
@@ -497,13 +506,13 @@ def _determine_smc_signal(
 
         if bearish_score >= 65:
             pattern_type = 'PERFECT_SMC'
-        elif bearish_score >= 50:
+        elif bearish_score >= 55:
             pattern_type = 'STRONG_SMC'
-        elif bearish_score >= 40:
+        elif bearish_score >= 50:
             pattern_type = 'MODERATE_SMC'
         else:
             pattern_type = 'WEAK_SMC'
 
         logger.debug(f"SHORT signal: score={bearish_score}, details={bearish_details}")
 
-    return direction, confidence, pattern_type
+    return direction, confidence, pattern_type, ''

@@ -1,8 +1,10 @@
 """
-Order Blocks Indicator - FULL IMPLEMENTATION
+Order Blocks Indicator - FIXED VERSION
 Файл: indicators/order_blocks.py
 
-✅ ПОЛНАЯ РЕАЛИЗАЦИЯ алгоритма Smart Money Order Blocks
+ИСПРАВЛЕНО:
+✅ #9: Добавлена проверка Order Block freshness
+✅ #15: Time-based фильтр для OB (возраст OB учитывается в scoring)
 """
 
 import numpy as np
@@ -19,10 +21,11 @@ class OrderBlockData:
     price_low: float
     price_high: float
     candle_index: int
-    direction: str  # 'BULLISH' | 'BEARISH'
-    strength: float  # 0-100
+    direction: str
+    strength: float
     is_mitigated: bool
     distance_from_current: float
+    age_in_candles: int  # ✅ НОВОЕ: Возраст OB
 
 
 @dataclass
@@ -40,15 +43,14 @@ def find_order_blocks(
         candles,
         lookback: int = 50,
         min_impulse_pct: float = 2.0,
-        min_imbalance_bars: int = 2
+        min_imbalance_bars: int = 2,
+        max_age_candles: int = 30  # ✅ НОВОЕ: Максимальный возраст OB
 ) -> List[OrderBlockData]:
     """
-    ✅ ПОЛНАЯ РЕАЛИЗАЦИЯ: Найти Order Blocks на графике
+    ✅ ИСПРАВЛЕНО: Найти Order Blocks с проверкой свежести
 
-    Алгоритм:
-    1. Найти Swing Highs/Lows (локальные экстремумы)
-    2. Детектировать импульсные движения от swing points
-    3. Определить последнюю противоположную свечу перед импульсом = OB
+    Args:
+        max_age_candles: Максимальный возраст OB в свечах (по умолчанию 30)
     """
     if not candles or not candles.is_valid:
         return []
@@ -59,30 +61,26 @@ def find_order_blocks(
     try:
         order_blocks = []
 
-        # Берём последние lookback свечей
         recent_highs = candles.highs[-lookback:]
         recent_lows = candles.lows[-lookback:]
         recent_closes = candles.closes[-lookback:]
         recent_opens = candles.opens[-lookback:]
 
         current_price = float(candles.closes[-1])
+        current_candle_index = len(candles.closes) - 1
 
-        # ============================================================
-        # ШАГ 1: Найти Swing Highs и Swing Lows
-        # ============================================================
+        # Swing points
         swing_highs = _find_swing_points(recent_highs, 'high', window=3)
         swing_lows = _find_swing_points(recent_lows, 'low', window=3)
 
         logger.debug(
-            f"Found {len(swing_highs)} swing highs, "
-            f"{len(swing_lows)} swing lows"
+            f"Found {len(swing_highs)} swing highs, {len(swing_lows)} swing lows"
         )
 
         # ============================================================
-        # ШАГ 2: Поиск БЫЧЬИХ Order Blocks (перед движением вверх)
+        # БЫЧЬИ Order Blocks
         # ============================================================
         for low_idx in swing_lows:
-            # Проверяем есть ли импульс ВВЕРХ после этого swing low
             impulse_detected, impulse_strength = _detect_impulse(
                 recent_closes,
                 recent_highs,
@@ -93,7 +91,6 @@ def find_order_blocks(
             )
 
             if impulse_detected:
-                # Order Block = последняя DOWN-свеча перед импульсом
                 ob_idx = _find_ob_candle(
                     recent_opens,
                     recent_closes,
@@ -105,7 +102,18 @@ def find_order_blocks(
                     ob_low = float(recent_lows[ob_idx])
                     ob_high = float(recent_highs[ob_idx])
 
-                    # Проверяем не был ли уже протестирован ценой
+                    # ✅ НОВОЕ: Рассчитываем возраст OB
+                    absolute_ob_index = len(candles.closes) - lookback + ob_idx
+                    age_in_candles = current_candle_index - absolute_ob_index
+
+                    # ✅ НОВОЕ: Пропускаем слишком старые OB
+                    if age_in_candles > max_age_candles:
+                        logger.debug(
+                            f"Skipping old Bullish OB at index {ob_idx} "
+                            f"(age: {age_in_candles} candles)"
+                        )
+                        continue
+
                     is_mitigated = _check_mitigation(
                         recent_lows,
                         recent_highs,
@@ -124,11 +132,12 @@ def find_order_blocks(
                         direction='BULLISH',
                         strength=impulse_strength,
                         is_mitigated=is_mitigated,
-                        distance_from_current=round(distance, 2)
+                        distance_from_current=round(distance, 2),
+                        age_in_candles=age_in_candles  # ✅ НОВОЕ
                     ))
 
         # ============================================================
-        # ШАГ 3: Поиск МЕДВЕЖЬИХ Order Blocks (перед движением вниз)
+        # МЕДВЕЖЬИ Order Blocks
         # ============================================================
         for high_idx in swing_highs:
             impulse_detected, impulse_strength = _detect_impulse(
@@ -152,6 +161,18 @@ def find_order_blocks(
                     ob_low = float(recent_lows[ob_idx])
                     ob_high = float(recent_highs[ob_idx])
 
+                    # ✅ НОВОЕ: Рассчитываем возраст OB
+                    absolute_ob_index = len(candles.closes) - lookback + ob_idx
+                    age_in_candles = current_candle_index - absolute_ob_index
+
+                    # ✅ НОВОЕ: Пропускаем слишком старые OB
+                    if age_in_candles > max_age_candles:
+                        logger.debug(
+                            f"Skipping old Bearish OB at index {ob_idx} "
+                            f"(age: {age_in_candles} candles)"
+                        )
+                        continue
+
                     is_mitigated = _check_mitigation(
                         recent_lows,
                         recent_highs,
@@ -170,13 +191,14 @@ def find_order_blocks(
                         direction='BEARISH',
                         strength=impulse_strength,
                         is_mitigated=is_mitigated,
-                        distance_from_current=round(distance, 2)
+                        distance_from_current=round(distance, 2),
+                        age_in_candles=age_in_candles  # ✅ НОВОЕ
                     ))
 
         # Сортируем по proximity к текущей цене
         order_blocks.sort(key=lambda x: x.distance_from_current)
 
-        logger.debug(f"Found {len(order_blocks)} total order blocks")
+        logger.debug(f"Found {len(order_blocks)} total order blocks (age <= {max_age_candles})")
         return order_blocks
 
     except Exception as e:
@@ -189,17 +211,11 @@ def _find_swing_points(
         point_type: str,
         window: int = 3
 ) -> List[int]:
-    """
-    Найти swing highs или swing lows
-
-    Swing High = локальный максимум (выше всех соседей в окне)
-    Swing Low = локальный минимум (ниже всех соседей в окне)
-    """
+    """Найти swing highs или swing lows"""
     swings = []
 
     for i in range(window, len(prices) - window):
         if point_type == 'high':
-            # Swing High: выше всех слева и справа
             left_condition = all(
                 prices[i] >= prices[i - j] for j in range(1, window + 1)
             )
@@ -211,7 +227,6 @@ def _find_swing_points(
                 swings.append(i)
 
         else:  # 'low'
-            # Swing Low: ниже всех слева и справа
             left_condition = all(
                 prices[i] <= prices[i - j] for j in range(1, window + 1)
             )
@@ -227,33 +242,24 @@ def _find_swing_points(
 
 def _detect_impulse(
         closes: np.ndarray,
-        extremes: np.ndarray,  # highs для BULLISH, lows для BEARISH
+        extremes: np.ndarray,
         start_idx: int,
         direction: str,
         min_pct: float,
         min_bars: int
 ) -> tuple[bool, float]:
-    """
-    Детекция импульсного движения
-
-    Критерии импульса:
-    - Движение >= min_pct за min_bars свечей
-    - Минимум 70% свечей движутся в направлении тренда
-    """
+    """Детекция импульсного движения"""
     if start_idx + min_bars >= len(closes):
         return False, 0.0
 
     try:
         start_price = float(closes[start_idx])
-
-        # Проверяем следующие min_bars свечей
         window = extremes[start_idx:start_idx + min_bars + 1]
 
         if direction == 'BULLISH':
             max_price = float(np.max(window))
             move_pct = ((max_price - start_price) / start_price) * 100
 
-            # Проверка чистоты движения
             has_clean_move = _check_clean_impulse(
                 closes[start_idx:start_idx + min_bars + 1],
                 'BULLISH'
@@ -268,9 +274,7 @@ def _detect_impulse(
                 'BEARISH'
             )
 
-        # Импульс подтверждён если движение >= min_pct и чистое
         if move_pct >= min_pct and has_clean_move:
-            # Strength зависит от размера движения
             strength = min(100, (move_pct / min_pct) * 50)
             return True, strength
 
@@ -282,11 +286,7 @@ def _detect_impulse(
 
 
 def _check_clean_impulse(closes: np.ndarray, direction: str) -> bool:
-    """
-    Проверка что импульс чистый (минимальные откаты)
-
-    Требование: минимум 70% свечей движутся в направлении тренда
-    """
+    """Проверка что импульс чистый (минимальные откаты)"""
     if len(closes) < 3:
         return False
 
@@ -314,28 +314,19 @@ def _find_ob_candle(
         impulse_start: int,
         direction: str
 ) -> Optional[int]:
-    """
-    Найти последнюю свечу перед импульсом (Order Block свеча)
-
-    Для BULLISH: последняя DOWN-свеча (close < open)
-    Для BEARISH: последняя UP-свеча (close > open)
-    """
+    """Найти последнюю свечу перед импульсом (Order Block свеча)"""
     if impulse_start < 1:
         return None
 
     try:
-        # Ищем назад от точки импульса (максимум 5 свечей)
         for i in range(impulse_start, max(0, impulse_start - 5), -1):
             if direction == 'BULLISH':
-                # Последняя down-свеча
                 if closes[i] < opens[i]:
                     return i
             else:  # BEARISH
-                # Последняя up-свеча
                 if closes[i] > opens[i]:
                     return i
 
-        # Если не нашли, возвращаем свечу перед импульсом
         return impulse_start - 1
 
     except Exception:
@@ -350,23 +341,16 @@ def _check_mitigation(
         ob_high: float,
         direction: str
 ) -> bool:
-    """
-    Проверка был ли Order Block протестирован (mitigated)
-
-    Mitigation = цена вернулась в зону OB
-    """
+    """Проверка был ли Order Block протестирован (mitigated)"""
     if ob_idx >= len(lows) - 1:
         return False
 
     try:
-        # Проверяем свечи ПОСЛЕ Order Block
         for i in range(ob_idx + 1, len(lows)):
             if direction == 'BULLISH':
-                # Цена вернулась в зону OB? (1% tolerance)
                 if lows[i] <= ob_high * 1.01:
                     return True
             else:  # BEARISH
-                # Цена вернулась в зону OB?
                 if highs[i] >= ob_low * 0.99:
                     return True
 
@@ -383,13 +367,12 @@ def analyze_order_blocks(
         lookback: int = 50
 ) -> Optional[OrderBlockAnalysis]:
     """
-    Анализ Order Blocks относительно текущей цены и направления сигнала
+    ✅ ИСПРАВЛЕНО: Анализ Order Blocks с учётом возраста
     """
     if not candles or current_price == 0:
         return None
 
     try:
-        # Находим все Order Blocks
         all_blocks = find_order_blocks(candles, lookback)
 
         if not all_blocks:
@@ -408,24 +391,30 @@ def analyze_order_blocks(
                 ob for ob in all_blocks
                 if ob.direction == 'BULLISH' and ob.price_high < current_price
             ]
-        else:  # SHORT
+        elif signal_direction == 'SHORT':
             relevant_blocks = [
                 ob for ob in all_blocks
                 if ob.direction == 'BEARISH' and ob.price_low > current_price
             ]
+        else:
+            # UNKNOWN - берём все
+            relevant_blocks = all_blocks
 
-        # Находим ближайший релевантный блок (fresh приоритетнее)
+        # Находим ближайший (fresh приоритетнее)
         nearest_ob = None
         if relevant_blocks:
             unmitigated = [ob for ob in relevant_blocks if not ob.is_mitigated]
 
             if unmitigated:
+                # Сортируем по distance, затем по age (свежие лучше)
+                unmitigated.sort(key=lambda x: (x.distance_from_current, x.age_in_candles))
                 nearest_ob = unmitigated[0]
             else:
+                relevant_blocks.sort(key=lambda x: (x.distance_from_current, x.age_in_candles))
                 nearest_ob = relevant_blocks[0]
 
-        # Рассчитываем confidence adjustment
-        adjustment = _calculate_ob_adjustment(nearest_ob, signal_direction)
+        # ✅ ИСПРАВЛЕНО: Рассчитываем adjustment с учётом возраста
+        adjustment = _calculate_ob_adjustment_with_age(nearest_ob, signal_direction)
 
         # Статистика
         bullish_count = sum(1 for ob in all_blocks if ob.direction == 'BULLISH')
@@ -433,14 +422,14 @@ def analyze_order_blocks(
 
         # Детали
         if nearest_ob:
-            distance_pct = nearest_ob.distance_from_current
             mitigation_status = "mitigated" if nearest_ob.is_mitigated else "fresh"
+            age_desc = f"{nearest_ob.age_in_candles} candles old"  # ✅ НОВОЕ
 
             details = (
                 f"Nearest {nearest_ob.direction} OB at "
                 f"${nearest_ob.price_low:.4f}-${nearest_ob.price_high:.4f} "
-                f"({distance_pct:.1f}% away, {mitigation_status}, "
-                f"strength: {nearest_ob.strength:.0f})"
+                f"({nearest_ob.distance_from_current:.1f}% away, {mitigation_status}, "
+                f"strength: {nearest_ob.strength:.0f}, age: {age_desc})"  # ✅ НОВОЕ
             )
         else:
             details = f"No relevant {signal_direction} order blocks nearby"
@@ -459,11 +448,13 @@ def analyze_order_blocks(
         return None
 
 
-def _calculate_ob_adjustment(
+def _calculate_ob_adjustment_with_age(
         nearest_ob: Optional[OrderBlockData],
         signal_direction: str
 ) -> int:
-    """Рассчитать корректировку confidence на основе Order Block"""
+    """
+    ✅ ИСПРАВЛЕНО: Рассчитать adjustment с учётом возраста OB
+    """
     if not nearest_ob:
         return 0
 
@@ -480,6 +471,25 @@ def _calculate_ob_adjustment(
         # Бонус за fresh (непротестированный) OB
         if not nearest_ob.is_mitigated:
             adjustment += 10
+
+        # ✅ НОВОЕ: Штраф/бонус за возраст
+        age = nearest_ob.age_in_candles
+
+        if age <= 5:
+            # Очень свежий OB (до 5 свечей)
+            adjustment += 8
+        elif age <= 10:
+            # Свежий OB (до 10 свечей)
+            adjustment += 5
+        elif age <= 20:
+            # Средний возраст (до 20 свечей)
+            adjustment += 2
+        elif age <= 30:
+            # Старый OB (до 30 свечей)
+            adjustment += 0
+        else:
+            # Очень старый OB (>30 свечей) - не должен попасть сюда
+            adjustment -= 5
 
         # Penalty за большую дистанцию
         if nearest_ob.distance_from_current > 5.0:

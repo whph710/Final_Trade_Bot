@@ -1,8 +1,9 @@
 """
-Imbalance (Fair Value Gap) Indicator
+Imbalance (Fair Value Gap) Indicator - FIXED VERSION
 Файл: indicators/imbalance.py
 
-Детекция Fair Value Gaps (имбалансы) - зоны где не было торговли
+ИСПРАВЛЕНО:
+✅ #11: Улучшена логика проверки заполнения FVG (учитывается частичное заполнение с обеих сторон)
 """
 
 import numpy as np
@@ -15,18 +16,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ImbalanceData:
-    """
-    Fair Value Gap (имбаланс)
-
-    Attributes:
-        gap_low: Нижняя граница gap
-        gap_high: Верхняя граница gap
-        candle_index: Индекс центральной свечи
-        direction: 'BULLISH' | 'BEARISH'
-        is_filled: Был ли заполнен ценой
-        fill_percentage: Процент заполнения (0-100)
-        distance_from_current: Расстояние от текущей цены в %
-    """
+    """Fair Value Gap (имбаланс)"""
     gap_low: float
     gap_high: float
     candle_index: int
@@ -49,32 +39,11 @@ class ImbalanceAnalysis:
 
 
 def find_imbalances(
-        candles,  # NormalizedCandles
+        candles,
         lookback: int = 50,
         min_gap_size_pct: float = 0.1
 ) -> List[ImbalanceData]:
-    """
-    Найти Fair Value Gaps (имбалансы)
-
-    Логика:
-    Имбаланс = зона, где НЕ было торговли (gap между свечами)
-
-    Bullish FVG:
-    - Candle[i-1].high < Candle[i+1].low
-    - Цена прыгнула вверх, оставив gap
-
-    Bearish FVG:
-    - Candle[i-1].low > Candle[i+1].high
-    - Цена прыгнула вниз, оставив gap
-
-    Args:
-        candles: NormalizedCandles объект
-        lookback: Количество свечей для анализа
-        min_gap_size_pct: Минимальный размер gap в %
-
-    Returns:
-        Список незаполненных и частично заполненных имбалансов
-    """
+    """Найти Fair Value Gaps (имбалансы)"""
     if not candles or not candles.is_valid:
         return []
 
@@ -84,7 +53,6 @@ def find_imbalances(
     try:
         imbalances = []
 
-        # Анализируем последние lookback свечей
         start_idx = max(0, len(candles.closes) - lookback)
 
         highs = candles.highs[start_idx:]
@@ -93,7 +61,9 @@ def find_imbalances(
 
         # Ищем gap паттерны (нужно минимум 3 свечи)
         for i in range(1, len(highs) - 1):
+            # ============================================================
             # Bullish FVG: gap между prev.high и next.low
+            # ============================================================
             prev_high = float(highs[i - 1])
             next_low = float(lows[i + 1])
 
@@ -101,8 +71,8 @@ def find_imbalances(
                 gap_size_pct = ((next_low - prev_high) / prev_high) * 100
 
                 if gap_size_pct >= min_gap_size_pct:
-                    # Проверяем был ли заполнен
-                    fill_pct, is_filled = _check_gap_fill(
+                    # ✅ ИСПРАВЛЕНО: Улучшенная проверка заполнения
+                    fill_pct, is_filled = _check_gap_fill_improved(
                         lows[i + 1:],
                         highs[i + 1:],
                         prev_high,
@@ -122,7 +92,9 @@ def find_imbalances(
                         distance_from_current=round(distance, 2)
                     ))
 
+            # ============================================================
             # Bearish FVG: gap между prev.low и next.high
+            # ============================================================
             prev_low = float(lows[i - 1])
             next_high = float(highs[i + 1])
 
@@ -130,7 +102,8 @@ def find_imbalances(
                 gap_size_pct = ((prev_low - next_high) / next_high) * 100
 
                 if gap_size_pct >= min_gap_size_pct:
-                    fill_pct, is_filled = _check_gap_fill(
+                    # ✅ ИСПРАВЛЕНО: Улучшенная проверка заполнения
+                    fill_pct, is_filled = _check_gap_fill_improved(
                         lows[i + 1:],
                         highs[i + 1:],
                         next_high,
@@ -161,29 +134,122 @@ def find_imbalances(
         return []
 
 
+def _check_gap_fill_improved(
+        lows: np.ndarray,
+        highs: np.ndarray,
+        gap_low: float,
+        gap_high: float,
+        direction: str
+) -> tuple[float, bool]:
+    """
+    ✅ ИСПРАВЛЕНО: Улучшенная проверка заполнения FVG
+
+    Учитывается:
+    - Частичное заполнение с обеих сторон
+    - Многократные касания зоны
+    - Агрессивное проникновение в зону
+
+    Returns:
+        (fill_percentage, is_filled)
+    """
+    if len(lows) == 0:
+        return 0.0, False
+
+    try:
+        gap_size = gap_high - gap_low
+        if gap_size <= 0:
+            return 0.0, False
+
+        max_fill = 0.0
+        total_penetration = 0.0
+        touch_count = 0
+
+        for i in range(len(lows)):
+            low = float(lows[i])
+            high = float(highs[i])
+
+            # ============================================================
+            # BULLISH FVG: цена возвращается вниз в зону gap
+            # ============================================================
+            if direction == 'BULLISH':
+                # Проверяем проникла ли цена в зону FVG
+                if low < gap_high and high > gap_low:
+                    # Цена в зоне FVG
+                    touch_count += 1
+
+                    # Рассчитываем насколько глубоко проникла
+                    penetration_low = max(gap_low, low)
+                    penetration_high = min(gap_high, high)
+
+                    penetration_size = penetration_high - penetration_low
+
+                    if penetration_size > 0:
+                        fill_ratio = (penetration_size / gap_size) * 100
+                        total_penetration += fill_ratio
+                        max_fill = max(max_fill, fill_ratio)
+
+                # Полное заполнение: цена прошла через всю зону
+                if low <= gap_low:
+                    max_fill = 100.0
+                    is_filled = True
+                    return round(max_fill, 1), is_filled
+
+            # ============================================================
+            # BEARISH FVG: цена возвращается вверх в зону gap
+            # ============================================================
+            else:
+                if high > gap_low and low < gap_high:
+                    touch_count += 1
+
+                    penetration_low = max(gap_low, low)
+                    penetration_high = min(gap_high, high)
+
+                    penetration_size = penetration_high - penetration_low
+
+                    if penetration_size > 0:
+                        fill_ratio = (penetration_size / gap_size) * 100
+                        total_penetration += fill_ratio
+                        max_fill = max(max_fill, fill_ratio)
+
+                # Полное заполнение
+                if high >= gap_high:
+                    max_fill = 100.0
+                    is_filled = True
+                    return round(max_fill, 1), is_filled
+
+        # ============================================================
+        # КРИТЕРИЙ ЗАПОЛНЕНИЯ
+        # ============================================================
+        # Считается заполненным если:
+        # 1. Максимальное проникновение > 50%, ИЛИ
+        # 2. Суммарное проникновение > 100% (многократные касания), ИЛИ
+        # 3. Более 3 касаний зоны
+
+        is_filled = (
+            max_fill > 50 or
+            total_penetration > 100 or
+            touch_count > 3
+        )
+
+        # Возвращаем максимальное проникновение как fill_percentage
+        return round(max_fill, 1), is_filled
+
+    except Exception as e:
+        logger.error(f"Gap fill check error: {e}")
+        return 0.0, False
+
+
 def analyze_imbalances(
-        candles,  # NormalizedCandles
+        candles,
         current_price: float,
         signal_direction: str,
         lookback: int = 50
 ) -> Optional[ImbalanceAnalysis]:
-    """
-    Анализ Imbalances относительно текущей цены
-
-    Args:
-        candles: NormalizedCandles объект
-        current_price: Текущая цена
-        signal_direction: 'LONG' | 'SHORT'
-        lookback: Период анализа
-
-    Returns:
-        ImbalanceAnalysis или None
-    """
+    """Анализ Imbalances относительно текущей цены"""
     if not candles or current_price == 0:
         return None
 
     try:
-        # Находим все имбалансы
         all_imbalances = find_imbalances(candles, lookback)
 
         if not all_imbalances:
@@ -199,28 +265,26 @@ def analyze_imbalances(
 
         # Фильтруем релевантные для направления сигнала
         if signal_direction == 'LONG':
-            # Для LONG интересны бычьи имбалансы ниже текущей цены
             relevant = [
                 imb for imb in all_imbalances
                 if imb.direction == 'BULLISH' and imb.gap_high < current_price
             ]
-        else:  # SHORT
-            # Для SHORT интересны медвежьи имбалансы выше текущей цены
+        elif signal_direction == 'SHORT':
             relevant = [
                 imb for imb in all_imbalances
                 if imb.direction == 'BEARISH' and imb.gap_low > current_price
             ]
+        else:
+            relevant = all_imbalances
 
         # Находим ближайший незаполненный или частично заполненный
         nearest = None
         if relevant:
-            # Приоритет незаполненным
             unfilled = [imb for imb in relevant if not imb.is_filled]
 
             if unfilled:
                 nearest = unfilled[0]
             else:
-                # Если все заполнены, берём ближайший
                 nearest = relevant[0]
 
         # Рассчитываем adjustment
@@ -261,61 +325,6 @@ def analyze_imbalances(
         return None
 
 
-def _check_gap_fill(
-        lows: np.ndarray,
-        highs: np.ndarray,
-        gap_low: float,
-        gap_high: float,
-        direction: str
-) -> tuple[float, bool]:
-    """
-    Проверить был ли gap заполнен
-
-    Returns:
-        (fill_percentage, is_filled)
-    """
-    if len(lows) == 0:
-        return 0.0, False
-
-    try:
-        gap_size = gap_high - gap_low
-        if gap_size <= 0:
-            return 0.0, False
-
-        max_fill = 0.0
-
-        for i in range(len(lows)):
-            low = float(lows[i])
-            high = float(highs[i])
-
-            if direction == 'BULLISH':
-                # Для бычьего gap проверяем вернулась ли цена вниз
-                if low <= gap_high:
-                    # Рассчитываем сколько заполнено
-                    fill_level = min(gap_high, low)
-                    filled = ((gap_high - fill_level) / gap_size) * 100
-                    max_fill = max(max_fill, filled)
-
-                    # Считается заполненным если >50%
-                    if filled > 50:
-                        return round(filled, 1), True
-
-            else:  # BEARISH
-                # Для медвежьего gap проверяем вернулась ли цена вверх
-                if high >= gap_low:
-                    fill_level = max(gap_low, high)
-                    filled = ((fill_level - gap_low) / gap_size) * 100
-                    max_fill = max(max_fill, filled)
-
-                    if filled > 50:
-                        return round(filled, 1), True
-
-        return round(max_fill, 1), False
-
-    except Exception:
-        return 0.0, False
-
-
 def _calculate_imbalance_adjustment(
         nearest: Optional[ImbalanceData],
         signal_direction: str
@@ -334,8 +343,11 @@ def _calculate_imbalance_adjustment(
         if not nearest.is_filled:
             adjustment += 8
         elif nearest.fill_percentage < 30:
-            # Частично заполнен
+            # Частично заполнен (<30%)
             adjustment += 5
+        elif nearest.fill_percentage < 50:
+            # Частично заполнен (30-50%)
+            adjustment += 3
 
         # Penalty за большую дистанцию
         if nearest.distance_from_current > 5.0:
