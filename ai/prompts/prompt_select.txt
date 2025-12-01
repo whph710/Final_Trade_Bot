@@ -1,23 +1,96 @@
-SWING TRADING SELECTION — TRIPLE EMA STRATEGY
+SWING TRADING SELECTION — SMART MONEY CONCEPT STRATEGY
 
-ЦЕЛЬ: Отобрать 3-5 пар с best tradeable setups на базе Triple EMA (9/21/50).
+ЦЕЛЬ: Отобрать 3-5 пар с лучшими SMC setups (Order Blocks + Liquidity Sweeps + Imbalances).
 
-TRIPLE EMA LOGIC:
-- EMA9 (быстрая) — краткосрочный momentum
-- EMA21 (средняя) — фильтр среднесрочного тренда
-- EMA50 (медленная) — основной тренд
+SMART MONEY CONCEPT LOGIC:
+Торговые решения институциональных игроков видны через:
+- **Order Blocks (OB)** — зоны накопления крупного капитала
+- **Fair Value Gaps (FVG/Imbalances)** — зоны где не было торговли (price magnets)
+- **Liquidity Sweeps** — ложные пробои для сбора стопов мелких трейдеров
 
-ПАТТЕРНЫ:
-1. Perfect Alignment: EMA9 > EMA21 > EMA50 (BULLISH)
-2. Golden Cross: EMA9 пересекает EMA21 вверх
-3. Pullback Bounce: Откат к EMA21 и отскок
-4. Compression Breakout: Сжатие EMAs + пробой
+КРИТЕРИИ ОТБОРА (минимум 70 баллов из 100):
 
-КРИТЕРИИ (минимум 60 баллов):
-- EMA alignment: 30 баллов
-- Momentum (RSI 40-80): 25 баллов
-- Volume (>1.0): 20 баллов
-- EMA structure: 25 баллов
+1. **Order Block Quality** (40 баллов):
+   - Fresh (non-mitigated) OB = 40 points
+   - Mitigated OB = 20 points
+   - OB within 2% from current price = +10 bonus
+   - OB strength >= 70 = +5 bonus
 
-OUTPUT:
-{"selected_pairs": ["BTCUSDT", "ETHUSDT", "SOLUSDT"]}
+2. **Liquidity Sweep Confirmation** (30 баллов):
+   - Sweep detected + reversal confirmed = 30 points
+   - Sweep detected, reversal weak = 15 points
+   - Volume spike on reversal = +5 bonus
+
+3. **Imbalance (FVG) Presence** (20 баллов):
+   - Unfilled FVG nearby = 20 points
+   - Partially filled FVG = 10 points
+
+4. **Volume & Momentum** (10 баллов):
+   - Volume > 1.5x = 10 points
+   - Volume > 1.2x = 5 points
+
+PATTERN TYPES (приоритет):
+1. **PERFECT_SMC** (85-95% confidence):
+   - Fresh OB + Liquidity Sweep + Unfilled FVG
+   - Все три компонента aligned
+
+2. **STRONG_SMC** (75-85% confidence):
+   - Fresh OB + (Sweep OR FVG)
+   - Два компонента aligned
+
+3. **MODERATE_SMC** (65-75% confidence):
+   - Mitigated OB + FVG
+   - Или Fresh OB но далеко (>5%)
+
+4. **WEAK_SMC** (60-65% confidence):
+   - Only OB OR only FVG
+   - Один компонент
+
+SCORING EXAMPLE:
+```
+BTCUSDT:
+- Fresh Bullish OB at 0.8% distance (40 + 10 = 50 pts)
+- Sweep Low confirmed (30 pts)
+- Unfilled FVG above (20 pts)
+- Volume 1.8x (10 pts)
+TOTAL: 110 pts → TOP PICK
+
+ETHUSDT:
+- Mitigated Bearish OB (20 pts)
+- No sweep (0 pts)
+- Partial FVG (10 pts)
+- Volume 1.1x (5 pts)
+TOTAL: 35 pts → REJECT
+```
+
+INPUT DATA FORMAT:
+For each pair you'll receive:
+- symbol
+- direction (LONG/SHORT)
+- confidence (60-95%)
+- pattern_type (PERFECT_SMC, STRONG_SMC, MODERATE_SMC, WEAK_SMC)
+- ob_analysis (Order Blocks data with nearest_ob details)
+- imbalance_analysis (FVG data with nearest_imbalance details)
+- sweep_analysis (Liquidity Sweep data with direction and confirmation)
+- ema_context (trend context: price_above_ema50, distance_pct)
+- volume_ratio
+- rsi_value
+
+OUTPUT FORMAT:
+{
+  "selected_pairs": ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+  "reasoning": "Brief explanation why these pairs were chosen (1-2 sentences per pair)"
+}
+
+SELECTION RULES:
+1. Prioritize PERFECT_SMC and STRONG_SMC patterns
+2. Balance between LONG and SHORT signals if possible
+3. Avoid pairs with same pattern_type (diversity)
+4. If all pairs weak → select top 3 by confidence
+5. Maximum 5 pairs, minimum 1 pair
+6. **NEVER select pairs with confidence < 65%** unless all pairs are weak
+7. Check ob_analysis.nearest_ob data for quality assessment
+8. Check sweep_analysis.sweep_detected and reversal_confirmed
+9. Check imbalance_analysis.nearest_imbalance for unfilled FVGs
+
+CRITICAL: Return ONLY valid JSON, no markdown, no explanations outside JSON.
