@@ -207,7 +207,7 @@ OUTPUT (JSON)
   "confidence": 60–100,
   "entry_price": *,
   "stop_loss": *,
-  "take_profit_levels": [*,*,*](float),
+  "take_profit_levels": [*,*,*](float)/[0, 0, 0],
   "analysis": "SMC reasoning only",
   "rejection_reason": null | "text"
 }

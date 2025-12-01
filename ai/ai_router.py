@@ -6,7 +6,7 @@ AI Router - FIXED VERSION
 1. Добавлены SMC данные (order_blocks, imbalances, liquidity_sweep) в DeepSeek Stage 3
 2. Исправлена обрезка свечей: 200 для 1H, 100 для 4H (вместо 100/60)
 3. Добавлена _serialize_to_json() для корректной сериализации dataclass
-4. Улучшена нормализация take_profit_levels
+4. КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Улучшена нормализация take_profit_levels с полной проверкой на None
 """
 
 import logging
@@ -384,7 +384,7 @@ class AIRouter:
 
             result['symbol'] = symbol
 
-            # Нормализация take_profit_levels
+            # ✅ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Нормализация take_profit_levels
             result = self._normalize_take_profit_levels(result, symbol)
 
             return result
@@ -401,12 +401,16 @@ class AIRouter:
             }
 
     def _normalize_take_profit_levels(self, result: Dict, symbol: str) -> Dict:
-        """Нормализация take_profit_levels с защитой от None"""
+        """
+        ✅ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Нормализация take_profit_levels с полной защитой от None
+        """
         try:
             tp_levels = result.get('take_profit_levels')
             entry_price = result.get('entry_price', 0)
 
-            # Случай 1: None или отсутствует
+            # ============================================================
+            # СЛУЧАЙ 1: None или отсутствует
+            # ============================================================
             if tp_levels is None:
                 logger.warning(f"{symbol}: take_profit_levels is None, generating defaults")
                 if entry_price > 0:
@@ -419,9 +423,13 @@ class AIRouter:
                     result['take_profit_levels'] = [0, 0, 0]
                 return result
 
-            # Случай 2: Не список
+            # ============================================================
+            # СЛУЧАЙ 2: Не список
+            # ============================================================
             if not isinstance(tp_levels, list):
-                logger.warning(f"{symbol}: take_profit_levels is not list ({type(tp_levels)}), converting")
+                logger.warning(
+                    f"{symbol}: take_profit_levels is not list ({type(tp_levels).__name__}), converting"
+                )
                 try:
                     single_tp = float(tp_levels)
                     result['take_profit_levels'] = [
@@ -440,24 +448,48 @@ class AIRouter:
                         result['take_profit_levels'] = [0, 0, 0]
                 return result
 
-            # Случай 3: Список меньше 3 элементов
-            if len(tp_levels) < 3:
-                logger.debug(f"{symbol}: take_profit_levels has {len(tp_levels)} elements, extending to 3")
+            # ============================================================
+            # СЛУЧАЙ 3: Пустой список
+            # ============================================================
+            if len(tp_levels) == 0:
+                logger.warning(f"{symbol}: take_profit_levels is empty list")
+                if entry_price > 0:
+                    result['take_profit_levels'] = [
+                        entry_price * 1.02,
+                        entry_price * 1.04,
+                        entry_price * 1.06
+                    ]
+                else:
+                    result['take_profit_levels'] = [0, 0, 0]
+                return result
 
+            # ============================================================
+            # СЛУЧАЙ 4: Список меньше 3 элементов
+            # ============================================================
+            if len(tp_levels) < 3:
+                logger.debug(
+                    f"{symbol}: take_profit_levels has {len(tp_levels)} elements, extending to 3"
+                )
+
+                # Фильтруем валидные значения
                 valid_tps = []
                 for tp in tp_levels:
                     if tp is not None:
                         try:
-                            valid_tps.append(float(tp))
+                            tp_float = float(tp)
+                            if not (tp_float == 0 or tp_float < 0):
+                                valid_tps.append(tp_float)
                         except (ValueError, TypeError):
                             pass
 
+                # Если есть хоть один валидный - расширяем
                 if valid_tps:
                     while len(valid_tps) < 3:
                         last_tp = valid_tps[-1]
                         valid_tps.append(last_tp * 1.1)
                     result['take_profit_levels'] = valid_tps
                 else:
+                    # Нет валидных - генерируем defaults
                     if entry_price > 0:
                         result['take_profit_levels'] = [
                             entry_price * 1.02,
@@ -466,35 +498,60 @@ class AIRouter:
                         ]
                     else:
                         result['take_profit_levels'] = [0, 0, 0]
+
                 return result
 
-            # Случай 4: Список из 3+ элементов - проверяем на None
+            # ============================================================
+            # СЛУЧАЙ 5: Список из 3+ элементов - проверяем на None
+            # ============================================================
             cleaned_tps = []
-            for tp in tp_levels[:3]:
+            for i, tp in enumerate(tp_levels[:3]):
                 if tp is None:
-                    logger.warning(f"{symbol}: Found None in take_profit_levels")
+                    logger.warning(f"{symbol}: Found None in take_profit_levels at index {i}")
+                    # Генерируем fallback значение
                     if cleaned_tps:
                         cleaned_tps.append(cleaned_tps[-1] * 1.1)
                     elif entry_price > 0:
-                        cleaned_tps.append(entry_price * 1.02)
+                        cleaned_tps.append(entry_price * (1.02 + i * 0.02))
                     else:
                         cleaned_tps.append(0)
                 else:
                     try:
-                        cleaned_tps.append(float(tp))
+                        tp_float = float(tp)
+                        cleaned_tps.append(tp_float)
                     except (ValueError, TypeError):
                         logger.warning(f"{symbol}: Could not convert TP to float: {tp}")
                         if cleaned_tps:
                             cleaned_tps.append(cleaned_tps[-1] * 1.1)
+                        elif entry_price > 0:
+                            cleaned_tps.append(entry_price * (1.02 + i * 0.02))
                         else:
                             cleaned_tps.append(0)
 
             result['take_profit_levels'] = cleaned_tps
+
+            logger.debug(
+                f"{symbol}: Normalized take_profit_levels = {cleaned_tps}"
+            )
+
             return result
 
         except Exception as e:
-            logger.error(f"{symbol}: Error normalizing take_profit_levels: {e}")
-            result['take_profit_levels'] = [0, 0, 0]
+            logger.error(f"{symbol}: CRITICAL Error normalizing take_profit_levels: {e}")
+            import traceback
+            traceback.print_exc()
+
+            # Полный fallback
+            entry_price = result.get('entry_price', 0)
+            if entry_price > 0:
+                result['take_profit_levels'] = [
+                    entry_price * 1.02,
+                    entry_price * 1.04,
+                    entry_price * 1.06
+                ]
+            else:
+                result['take_profit_levels'] = [0, 0, 0]
+
             return result
 
     def _serialize_to_json(self, obj):
