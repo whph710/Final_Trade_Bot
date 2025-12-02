@@ -1,9 +1,12 @@
 """
-Stage 1: SMC-Based Signal Filtering - FIXED VERSION
+Stage 1: Signal Filtering - LEVELS + ATR Strategy
 Файл: stages/stage1_filter.py
 
-✅ ИСПРАВЛЕНО:
-- Проблема #6: EMA distance используется в scoring (штрафуется overextension)
+✅ НОВАЯ СТРАТЕГИЯ:
+- Уровни поддержки/сопротивления (метод "3 удара")
+- ATR для расчёта волн
+- EMA200 для контекста тренда
+- Объёмы как ключевой фильтр
 """
 
 import logging
@@ -19,10 +22,9 @@ class SignalCandidate:
     symbol: str
     direction: str
     confidence: int
-    ob_analysis: 'OrderBlockAnalysis'
-    imbalance_analysis: 'ImbalanceAnalysis'
-    sweep_analysis: dict
-    ema_context: dict
+    sr_analysis: 'SupportResistanceAnalysis'
+    wave_analysis: 'WaveAnalysis'
+    ema200_context: dict
     volume_analysis: 'VolumeAnalysis'
     rsi_value: float
     pattern_type: str
@@ -30,16 +32,25 @@ class SignalCandidate:
 
 async def run_stage1(
         pairs: List[str],
-        min_confidence: int = 55,
-        min_volume_ratio: float = 0.8
+        min_confidence: int = 60,
+        min_volume_ratio: float = 1.0
 ) -> List[SignalCandidate]:
-    """Stage 1: Фильтрация пар по Smart Money Concept паттернам"""
+    """
+    Stage 1: Фильтрация пар по стратегии Уровни + ATR
+
+    Args:
+        pairs: Список торговых пар
+        min_confidence: Минимальный confidence (default 60)
+        min_volume_ratio: Минимальный volume ratio (default 1.0)
+
+    Returns:
+        Список SignalCandidate с confidence >= min_confidence
+    """
     from data_providers import fetch_multiple_candles, normalize_candles
     from indicators import (
-        analyze_order_blocks,
-        analyze_imbalances,
-        analyze_liquidity_sweep,
-        calculate_ema,
+        analyze_support_resistance,
+        analyze_waves_atr,
+        analyze_ema200,
         analyze_volume,
         calculate_rsi
     )
@@ -50,10 +61,10 @@ async def run_stage1(
         logger.warning("Stage 1: No pairs provided")
         return []
 
-    logger.info(f"Stage 1 (SMC-ADAPTED): Analyzing {len(pairs)} pairs")
+    logger.info(f"Stage 1 (LEVELS+ATR): Analyzing {len(pairs)} pairs")
     start_time = time.time()
 
-    # Batch loading
+    # Batch loading 4H candles
     requests = [
         {'symbol': symbol, 'interval': config.TIMEFRAME_LONG, 'limit': 100}
         for symbol in pairs
@@ -71,11 +82,11 @@ async def run_stage1(
     processed = 0
     stats = {
         'invalid': 0,
-        'no_smc_patterns': 0,
+        'no_levels': 0,
         'low_confidence': 0,
         'low_volume': 0,
         'rsi_extreme': 0,
-        'conflicting_signals': 0
+        'overextension': 0
     }
 
     for result in batch_results:
@@ -95,33 +106,31 @@ async def run_stage1(
 
             current_price = float(candles.closes[-1])
 
-            # SMC ANALYSIS
-            ob_analysis = analyze_order_blocks(
-                candles, current_price, signal_direction='UNKNOWN', lookback=50
+            # ============================================================
+            # SUPPORT/RESISTANCE LEVELS
+            # ============================================================
+            sr_analysis = analyze_support_resistance(
+                candles, current_price, signal_direction='UNKNOWN'
             )
 
-            if not ob_analysis or ob_analysis.total_blocks_found == 0:
-                stats['no_smc_patterns'] += 1
+            if not sr_analysis or len(sr_analysis.all_levels) == 0:
+                stats['no_levels'] += 1
+                logger.debug(f"Stage 1: {symbol} - No S/R levels found")
                 continue
 
-            imbalance_analysis = analyze_imbalances(
-                candles, current_price, signal_direction='UNKNOWN', lookback=50
-            )
-            sweep_analysis = analyze_liquidity_sweep(candles, signal_direction='UNKNOWN')
+            # ============================================================
+            # ATR WAVE ANALYSIS
+            # ============================================================
+            wave_analysis = analyze_waves_atr(candles, num_waves=5)
 
-            # EMA CONTEXT
-            ema50 = calculate_ema(candles.closes, config.EMA_SLOW)
-            current_ema50 = float(ema50[-1])
-            price_above_ema50 = current_price > current_ema50
-            distance_from_ema50 = abs((current_price - current_ema50) / current_ema50 * 100)
+            # ============================================================
+            # EMA200 CONTEXT
+            # ============================================================
+            ema200_context = analyze_ema200(candles)
 
-            ema_context = {
-                'ema50': current_ema50,
-                'price_above_ema50': price_above_ema50,
-                'distance_pct': distance_from_ema50
-            }
-
+            # ============================================================
             # VOLUME + RSI
+            # ============================================================
             volume_analysis = analyze_volume(candles, window=config.VOLUME_WINDOW)
             if not volume_analysis:
                 stats['invalid'] += 1
@@ -140,25 +149,19 @@ async def run_stage1(
                 logger.debug(f"Stage 1: {symbol} skipped - RSI extreme ({current_rsi:.1f})")
                 continue
 
-            # RSI penalty
-            if current_rsi > 75:
-                rsi_penalty = -10
-            elif current_rsi < 25:
-                rsi_penalty = -10
-            else:
-                rsi_penalty = 0
-
-            # ✅ ОПРЕДЕЛЯЕМ НАПРАВЛЕНИЕ + CONFIDENCE (с EMA distance penalty)
-            direction, confidence, pattern_type, rejection_reason = _determine_smc_signal_adapted(
-                ob_analysis, imbalance_analysis, sweep_analysis,
-                ema_context, current_rsi, volume_analysis, current_price, rsi_penalty
+            # ============================================================
+            # ОПРЕДЕЛЯЕМ НАПРАВЛЕНИЕ + CONFIDENCE
+            # ============================================================
+            direction, confidence, pattern_type, rejection_reason = _determine_level_signal(
+                sr_analysis, wave_analysis, ema200_context,
+                current_rsi, volume_analysis
             )
 
             if direction == 'NONE':
-                if 'CONFLICTING' in rejection_reason:
-                    stats['conflicting_signals'] += 1
+                if 'overextension' in rejection_reason.lower():
+                    stats['overextension'] += 1
                 else:
-                    stats['no_smc_patterns'] += 1
+                    stats['no_levels'] += 1
 
                 logger.debug(f"Stage 1: {symbol} - {rejection_reason}")
                 continue
@@ -168,15 +171,16 @@ async def run_stage1(
                 logger.debug(f"Stage 1: {symbol} skipped (confidence {confidence} < {min_confidence})")
                 continue
 
+            # ============================================================
             # СОЗДАЁМ КАНДИДАТА
+            # ============================================================
             candidate = SignalCandidate(
                 symbol=symbol,
                 direction=direction,
                 confidence=confidence,
-                ob_analysis=ob_analysis,
-                imbalance_analysis=imbalance_analysis,
-                sweep_analysis=sweep_analysis,
-                ema_context=ema_context,
+                sr_analysis=sr_analysis,
+                wave_analysis=wave_analysis,
+                ema200_context=ema200_context,
                 volume_analysis=volume_analysis,
                 rsi_value=current_rsi,
                 pattern_type=pattern_type
@@ -196,18 +200,18 @@ async def run_stage1(
 
     # СТАТИСТИКА
     logger.info("=" * 70)
-    logger.info("STAGE 1 (SMC-ADAPTED) COMPLETE")
+    logger.info("STAGE 1 (LEVELS+ATR) COMPLETE")
     logger.info("=" * 70)
     logger.info(f"Total time: {total_time:.1f}s")
     logger.info(f"Processed: {processed} pairs")
-    logger.info(f"✅ SMC Signals found: {len(candidates)}")
+    logger.info(f"✅ Signals found: {len(candidates)}")
     logger.info(f"❌ Skipped breakdown:")
     logger.info(f"   • Invalid data: {stats['invalid']}")
-    logger.info(f"   • No SMC patterns: {stats['no_smc_patterns']}")
+    logger.info(f"   • No S/R levels: {stats['no_levels']}")
     logger.info(f"   • Low confidence: {stats['low_confidence']}")
     logger.info(f"   • Low volume: {stats['low_volume']}")
     logger.info(f"   • RSI extreme: {stats['rsi_extreme']}")
-    logger.info(f"   • Conflicting signals: {stats['conflicting_signals']}")
+    logger.info(f"   • Overextension: {stats['overextension']}")
 
     if candidates:
         logger.info(f"\n📊 Pattern distribution:")
@@ -227,192 +231,201 @@ async def run_stage1(
     return candidates
 
 
-def _determine_smc_signal_adapted(
-        ob_analysis: 'OrderBlockAnalysis',
-        imbalance_analysis: 'ImbalanceAnalysis',
-        sweep_analysis: dict,
-        ema_context: dict,
+def _determine_level_signal(
+        sr_analysis: 'SupportResistanceAnalysis',
+        wave_analysis: 'WaveAnalysis',
+        ema200_context: dict,
         rsi: float,
-        volume_analysis: 'VolumeAnalysis',
-        current_price: float,
-        rsi_penalty: int
+        volume_analysis: 'VolumeAnalysis'
 ) -> tuple[str, int, str, str]:
     """
-    ✅ ИСПРАВЛЕНО: EMA distance теперь используется в scoring
+    Определить сигнал на основе уровней + ATR
+
+    БЫЧИЙ СИГНАЛ (LONG):
+    ✅ Цена около уровня SUPPORT (< 1%)
+    ✅ Уровень сильный (3+ касания)
+    ✅ Объём растёт
+    ✅ ATR: ранний вход (< 30% от средней волны)
+    ✅ EMA200: цена выше EMA200 (бычий тренд)
+    ✅ RSI: 40-70
+
+    МЕДВЕЖИЙ СИГНАЛ (SHORT):
+    ✅ Цена около уровня RESISTANCE (< 1%)
+    ✅ Уровень сильный (3+ касания)
+    ✅ Объём растёт
+    ✅ ATR: ранний вход
+    ✅ EMA200: цена ниже EMA200 (медвежий тренд)
+    ✅ RSI: 30-60
+
+    SCORING:
+    - Качество уровня (3+ касания): 35 баллов
+    - Расстояние до уровня (< 1%): 25 баллов
+    - ATR ранний вход: 20 баллов
+    - EMA200 alignment: 10 баллов
+    - Объём > 1.5x: 10 баллов
+
+    MIN_SCORE = 60 баллов
     """
 
-    MIN_SCORE = 25
-    MIN_DIFF = 15
+    MIN_SCORE = 60
 
     # ============================================================
-    # БЫЧЬИ ПАТТЕРНЫ
+    # БЫЧИЙ ПАТТЕРН (LONG)
     # ============================================================
     bullish_score = 0
     bullish_details = []
 
-    # Order Blocks
-    if ob_analysis.bullish_blocks > 0:
-        nearest_ob = ob_analysis.nearest_ob
+    nearest_support = sr_analysis.nearest_support
 
-        if nearest_ob and nearest_ob.direction == 'BULLISH':
-            distance = nearest_ob.distance_from_current
+    if nearest_support:
+        # Качество уровня
+        if nearest_support.touches >= 5:
+            bullish_score += 40
+            bullish_details.append(f"Premium support ({nearest_support.touches} touches)")
+        elif nearest_support.touches >= 4:
+            bullish_score += 35
+            bullish_details.append(f"Strong support ({nearest_support.touches} touches)")
+        elif nearest_support.touches >= 3:
+            bullish_score += 25
+            bullish_details.append(f"Valid support ({nearest_support.touches} touches)")
 
-            if not nearest_ob.is_mitigated:
-                base_score = 35
-                bullish_details.append("Fresh Bullish OB")
-            else:
-                base_score = 18
-                bullish_details.append("Mitigated Bullish OB")
+        # Расстояние до уровня
+        distance = nearest_support.distance_from_current_pct
+        if distance < 0.5:
+            bullish_score += 30
+            bullish_details.append(f"Ideal entry (<0.5%)")
+        elif distance < 1.0:
+            bullish_score += 25
+            bullish_details.append(f"Good entry (<1%)")
+        elif distance < 2.0:
+            bullish_score += 15
+            bullish_details.append(f"Acceptable entry (<2%)")
+        else:
+            bullish_details.append(f"Too far from support ({distance:.1f}%)")
 
-            if distance < 1.0:
-                bullish_score += base_score + 10
-                bullish_details.append("OB very close (<1%)")
-            elif distance < 2.5:
-                bullish_score += base_score + 5
-                bullish_details.append("OB close (<2.5%)")
-            elif distance < 5.0:
-                bullish_score += base_score
-                bullish_details.append(f"OB medium distance ({distance:.1f}%)")
-            elif distance < 8.0:
-                bullish_score += base_score - 10
-                bullish_details.append(f"OB far ({distance:.1f}%)")
-            else:
-                bullish_score += 5
-                bullish_details.append(f"OB too far ({distance:.1f}%)")
-
-    # Imbalances
-    if imbalance_analysis and imbalance_analysis.bullish_count > 0:
-        nearest_imb = imbalance_analysis.nearest_imbalance
-        if nearest_imb and nearest_imb.direction == 'BULLISH':
-            if not nearest_imb.is_filled:
-                bullish_score += 15
-                bullish_details.append("Unfilled Bullish FVG")
-            elif nearest_imb.fill_percentage < 50:
-                bullish_score += 8
-
-    # Liquidity Sweep
-    if sweep_analysis.get('sweep_detected'):
-        sweep_data = sweep_analysis.get('sweep_data')
-        if sweep_data and sweep_data.direction == 'SWEEP_LOW':
-            if sweep_data.reversal_confirmed:
+    # ATR Wave Analysis
+    if wave_analysis:
+        if wave_analysis.wave_type == 'BULLISH':
+            if wave_analysis.is_early_entry:
                 bullish_score += 20
-                bullish_details.append("Sweep Low + Reversal")
-                if sweep_data.volume_confirmation:
-                    bullish_score += 5
+                bullish_details.append(f"Early entry ({wave_analysis.current_wave_progress:.0f}% of ATR)")
+            elif wave_analysis.current_wave_progress < 50:
+                bullish_score += 15
+                bullish_details.append(f"Good entry ({wave_analysis.current_wave_progress:.0f}% of ATR)")
+            elif wave_analysis.current_wave_progress < 70:
+                bullish_score += 5
+            else:
+                bullish_score -= 10
+                bullish_details.append(f"Late entry ({wave_analysis.current_wave_progress:.0f}%)")
 
-    # ✅ ИСПРАВЛЕНО #6: EMA distance penalty (overextension)
-    if ema_context['price_above_ema50']:
-        bullish_score += 3
-        bullish_details.append("Above EMA50")
+    # EMA200 alignment
+    if ema200_context['price_above_ema200']:
+        bullish_score += 10
+        bullish_details.append("Above EMA200 (bullish trend)")
 
-        # ✅ НОВОЕ: Штрафуем overextension
-        distance_pct = ema_context['distance_pct']
-        if distance_pct > 10.0:
+        # Проверка overextension
+        distance_ema = ema200_context['distance_pct']
+        if distance_ema > 10:
             bullish_score -= 15
-            bullish_details.append(f"OVEREXTENDED from EMA50 ({distance_pct:.1f}%)")
-        elif distance_pct > 5.0:
+            bullish_details.append(f"OVEREXTENDED from EMA200 ({distance_ema:.1f}%)")
+        elif distance_ema > 5:
             bullish_score -= 8
-            bullish_details.append(f"Extended from EMA50 ({distance_pct:.1f}%)")
-        elif distance_pct < 3.0:
-            bullish_score += 5
-            bullish_details.append(f"Near EMA50 ({distance_pct:.1f}%)")
 
     # RSI optimal
     if 40 <= rsi <= 70:
         bullish_score += 5
+    elif rsi > 75:
+        bullish_score -= 10
 
     # Volume
-    if volume_analysis.volume_ratio_current > 1.5:
+    vol_ratio = volume_analysis.volume_ratio_current
+    if vol_ratio > 2.0:
+        bullish_score += 10
+        bullish_details.append(f"Strong volume ({vol_ratio:.1f}x)")
+    elif vol_ratio > 1.5:
         bullish_score += 8
-        bullish_details.append(f"Volume {volume_analysis.volume_ratio_current:.1f}x")
-    elif volume_analysis.volume_ratio_current > 1.2:
+    elif vol_ratio > 1.2:
         bullish_score += 5
 
-    bullish_score += rsi_penalty
-
     # ============================================================
-    # МЕДВЕЖЬИ ПАТТЕРНЫ (аналогично)
+    # МЕДВЕЖИЙ ПАТТЕРН (SHORT)
     # ============================================================
     bearish_score = 0
     bearish_details = []
 
-    if ob_analysis.bearish_blocks > 0:
-        nearest_ob = ob_analysis.nearest_ob
+    nearest_resistance = sr_analysis.nearest_resistance
 
-        if nearest_ob and nearest_ob.direction == 'BEARISH':
-            distance = nearest_ob.distance_from_current
+    if nearest_resistance:
+        # Качество уровня
+        if nearest_resistance.touches >= 5:
+            bearish_score += 40
+            bearish_details.append(f"Premium resistance ({nearest_resistance.touches} touches)")
+        elif nearest_resistance.touches >= 4:
+            bearish_score += 35
+            bearish_details.append(f"Strong resistance ({nearest_resistance.touches} touches)")
+        elif nearest_resistance.touches >= 3:
+            bearish_score += 25
+            bearish_details.append(f"Valid resistance ({nearest_resistance.touches} touches)")
 
-            if not nearest_ob.is_mitigated:
-                base_score = 35
-                bearish_details.append("Fresh Bearish OB")
-            else:
-                base_score = 18
-                bearish_details.append("Mitigated Bearish OB")
+        # Расстояние до уровня
+        distance = nearest_resistance.distance_from_current_pct
+        if distance < 0.5:
+            bearish_score += 30
+            bearish_details.append(f"Ideal entry (<0.5%)")
+        elif distance < 1.0:
+            bearish_score += 25
+            bearish_details.append(f"Good entry (<1%)")
+        elif distance < 2.0:
+            bearish_score += 15
+            bearish_details.append(f"Acceptable entry (<2%)")
+        else:
+            bearish_details.append(f"Too far from resistance ({distance:.1f}%)")
 
-            if distance < 1.0:
-                bearish_score += base_score + 10
-                bearish_details.append("OB very close (<1%)")
-            elif distance < 2.5:
-                bearish_score += base_score + 5
-                bearish_details.append("OB close (<2.5%)")
-            elif distance < 5.0:
-                bearish_score += base_score
-                bearish_details.append(f"OB medium distance ({distance:.1f}%)")
-            elif distance < 8.0:
-                bearish_score += base_score - 10
-                bearish_details.append(f"OB far ({distance:.1f}%)")
-            else:
-                bearish_score += 5
-                bearish_details.append(f"OB too far ({distance:.1f}%)")
-
-    if imbalance_analysis and imbalance_analysis.bearish_count > 0:
-        nearest_imb = imbalance_analysis.nearest_imbalance
-        if nearest_imb and nearest_imb.direction == 'BEARISH':
-            if not nearest_imb.is_filled:
-                bearish_score += 15
-                bearish_details.append("Unfilled Bearish FVG")
-            elif nearest_imb.fill_percentage < 50:
-                bearish_score += 8
-
-    if sweep_analysis.get('sweep_detected'):
-        sweep_data = sweep_analysis.get('sweep_data')
-        if sweep_data and sweep_data.direction == 'SWEEP_HIGH':
-            if sweep_data.reversal_confirmed:
+    # ATR Wave Analysis
+    if wave_analysis:
+        if wave_analysis.wave_type == 'BEARISH':
+            if wave_analysis.is_early_entry:
                 bearish_score += 20
-                bearish_details.append("Sweep High + Reversal")
-                if sweep_data.volume_confirmation:
-                    bearish_score += 5
+                bearish_details.append(f"Early entry ({wave_analysis.current_wave_progress:.0f}% of ATR)")
+            elif wave_analysis.current_wave_progress < 50:
+                bearish_score += 15
+                bearish_details.append(f"Good entry ({wave_analysis.current_wave_progress:.0f}% of ATR)")
+            elif wave_analysis.current_wave_progress < 70:
+                bearish_score += 5
+            else:
+                bearish_score -= 10
+                bearish_details.append(f"Late entry ({wave_analysis.current_wave_progress:.0f}%)")
 
-    # ✅ ИСПРАВЛЕНО #6: EMA distance penalty
-    if not ema_context['price_above_ema50']:
-        bearish_score += 3
-        bearish_details.append("Below EMA50")
+    # EMA200 alignment
+    if not ema200_context['price_above_ema200']:
+        bearish_score += 10
+        bearish_details.append("Below EMA200 (bearish trend)")
 
-        # ✅ НОВОЕ: Штрафуем overextension
-        distance_pct = ema_context['distance_pct']
-        if distance_pct > 10.0:
+        # Проверка overextension
+        distance_ema = ema200_context['distance_pct']
+        if distance_ema > 10:
             bearish_score -= 15
-            bearish_details.append(f"OVEREXTENDED from EMA50 ({distance_pct:.1f}%)")
-        elif distance_pct > 5.0:
+            bearish_details.append(f"OVEREXTENDED from EMA200 ({distance_ema:.1f}%)")
+        elif distance_ema > 5:
             bearish_score -= 8
-            bearish_details.append(f"Extended from EMA50 ({distance_pct:.1f}%)")
-        elif distance_pct < 3.0:
-            bearish_score += 5
-            bearish_details.append(f"Near EMA50 ({distance_pct:.1f}%)")
 
+    # RSI optimal
     if 30 <= rsi <= 60:
         bearish_score += 5
+    elif rsi < 25:
+        bearish_score -= 10
 
-    if volume_analysis.volume_ratio_current > 1.5:
+    # Volume
+    if vol_ratio > 2.0:
+        bearish_score += 10
+        bearish_details.append(f"Strong volume ({vol_ratio:.1f}x)")
+    elif vol_ratio > 1.5:
         bearish_score += 8
-        bearish_details.append(f"Volume {volume_analysis.volume_ratio_current:.1f}x")
-    elif volume_analysis.volume_ratio_current > 1.2:
+    elif vol_ratio > 1.2:
         bearish_score += 5
 
-    bearish_score += rsi_penalty
-
     # ============================================================
-    # РЕШАЮЩАЯ ЛОГИКА
+    # РЕШЕНИЕ
     # ============================================================
 
     if bullish_score < MIN_SCORE and bearish_score < MIN_SCORE:
@@ -420,36 +433,32 @@ def _determine_smc_signal_adapted(
 
     if bullish_score >= MIN_SCORE and bearish_score >= MIN_SCORE:
         score_diff = abs(bullish_score - bearish_score)
-        if score_diff < MIN_DIFF:
-            logger.warning(f"Conflicting SMC signals: LONG={bullish_score}, SHORT={bearish_score}, diff={score_diff}")
-            return 'NONE', 0, 'CONFLICTING_SIGNALS', f'Both directions strong (L:{bullish_score}, S:{bearish_score}, diff:{score_diff})'
+        if score_diff < 15:
+            return 'NONE', 0, 'CONFLICTING', f'Both strong (L:{bullish_score}, S:{bearish_score})'
 
     if bullish_score > bearish_score:
         direction = 'LONG'
         confidence = min(95, 50 + bullish_score)
 
-        if bullish_score >= 60:
-            pattern_type = 'PERFECT_SMC'
-        elif bullish_score >= 45:
-            pattern_type = 'STRONG_SMC'
-        elif bullish_score >= 30:
-            pattern_type = 'MODERATE_SMC'
+        if bullish_score >= 85:
+            pattern_type = 'PERFECT_LEVEL'
+        elif bullish_score >= 70:
+            pattern_type = 'STRONG_LEVEL'
         else:
-            pattern_type = 'WEAK_SMC'
+            pattern_type = 'MODERATE_LEVEL'
 
         logger.debug(f"LONG signal: score={bullish_score}, details={bullish_details}")
+
     else:
         direction = 'SHORT'
         confidence = min(95, 50 + bearish_score)
 
-        if bearish_score >= 60:
-            pattern_type = 'PERFECT_SMC'
-        elif bearish_score >= 45:
-            pattern_type = 'STRONG_SMC'
-        elif bearish_score >= 30:
-            pattern_type = 'MODERATE_SMC'
+        if bearish_score >= 85:
+            pattern_type = 'PERFECT_LEVEL'
+        elif bearish_score >= 70:
+            pattern_type = 'STRONG_LEVEL'
         else:
-            pattern_type = 'WEAK_SMC'
+            pattern_type = 'MODERATE_LEVEL'
 
         logger.debug(f"SHORT signal: score={bearish_score}, details={bearish_details}")
 

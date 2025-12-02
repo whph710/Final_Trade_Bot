@@ -1,35 +1,21 @@
 """
-Triple EMA Indicator (9/21/50)
+Triple EMA Indicator (9/21/50) + EMA200 Context
 Файл: indicators/ema.py
 
-EMA расчёт и анализ для определения трендов и паттернов
+ОБНОВЛЕНО: Добавлена функция analyze_ema200() для контекста тренда
 """
 
 import numpy as np
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Dict
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class EMAAnalysis:
-    """
-    Результат анализа Triple EMA
-
-    Attributes:
-        ema9_current: Текущее значение EMA9
-        ema21_current: Текущее значение EMA21
-        ema50_current: Текущее значение EMA50
-        alignment: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
-        crossover: 'GOLDEN' | 'DEATH' | 'NONE'
-        pullback: 'BULLISH_BOUNCE' | 'BEARISH_BOUNCE' | 'NONE'
-        compression: 'BREAKOUT_UP' | 'BREAKOUT_DOWN' | 'COMPRESSED' | 'NONE'
-        distance_from_ema50_pct: Расстояние цены от EMA50 в процентах
-        confidence_score: Общий балл уверенности (0-100)
-        details: Текстовое описание паттерна
-    """
+    """Результат анализа Triple EMA"""
     ema9_current: float
     ema21_current: float
     ema50_current: float
@@ -43,18 +29,8 @@ class EMAAnalysis:
 
 
 def calculate_ema(prices: np.ndarray, period: int) -> np.ndarray:
-    """
-    Рассчитать Exponential Moving Average
-
-    Args:
-        prices: Массив цен
-        period: Период EMA
-
-    Returns:
-        Массив значений EMA той же длины что и prices
-    """
+    """Рассчитать Exponential Moving Average"""
     if len(prices) < period:
-        # Если недостаточно данных, возвращаем массив с первой ценой
         return np.full_like(prices, prices[0] if len(prices) > 0 else 0)
 
     try:
@@ -66,10 +42,8 @@ def calculate_ema(prices: np.ndarray, period: int) -> np.ndarray:
         ema = np.zeros_like(prices, dtype=np.float64)
         alpha = 2.0 / (period + 1)
 
-        # Инициализация первым ненулевым значением
         ema[0] = next((p for p in prices if p > 0), prices[0])
 
-        # Расчёт EMA
         for i in range(1, len(prices)):
             ema[i] = alpha * prices[i] + (1 - alpha) * ema[i - 1]
 
@@ -80,8 +54,87 @@ def calculate_ema(prices: np.ndarray, period: int) -> np.ndarray:
         return np.full_like(prices, prices[0] if len(prices) > 0 else 0)
 
 
+def analyze_ema200(
+        candles: 'NormalizedCandles'
+) -> Dict:
+    """
+    ✅ НОВОЕ: Упрощённый анализ EMA200 для контекста тренда
+
+    Args:
+        candles: NormalizedCandles объект
+
+    Returns:
+        Dict с данными EMA200:
+        {
+            'ema200_current': float,
+            'price_above_ema200': bool,
+            'distance_pct': float,
+            'trend': 'BULLISH' | 'BEARISH' | 'FLAT'
+        }
+    """
+    if not candles or not candles.is_valid:
+        return {
+            'ema200_current': 0,
+            'price_above_ema200': False,
+            'distance_pct': 0,
+            'trend': 'FLAT'
+        }
+
+    if len(candles.closes) < 200:
+        # Недостаточно данных для EMA200
+        return {
+            'ema200_current': 0,
+            'price_above_ema200': False,
+            'distance_pct': 0,
+            'trend': 'FLAT'
+        }
+
+    try:
+        ema200 = calculate_ema(candles.closes, 200)
+        current_ema200 = float(ema200[-1])
+        current_price = float(candles.closes[-1])
+
+        if current_ema200 == 0:
+            return {
+                'ema200_current': 0,
+                'price_above_ema200': False,
+                'distance_pct': 0,
+                'trend': 'FLAT'
+            }
+
+        # Расстояние от EMA200
+        distance_pct = abs((current_price - current_ema200) / current_ema200 * 100)
+        price_above = current_price > current_ema200
+
+        # Определяем тренд по наклону EMA200
+        ema200_slope = (ema200[-1] - ema200[-20]) / ema200[-20] * 100
+
+        if ema200_slope > 0.5:
+            trend = 'BULLISH'
+        elif ema200_slope < -0.5:
+            trend = 'BEARISH'
+        else:
+            trend = 'FLAT'
+
+        return {
+            'ema200_current': current_ema200,
+            'price_above_ema200': price_above,
+            'distance_pct': round(distance_pct, 2),
+            'trend': trend
+        }
+
+    except Exception as e:
+        logger.error(f"EMA200 analysis error: {e}")
+        return {
+            'ema200_current': 0,
+            'price_above_ema200': False,
+            'distance_pct': 0,
+            'trend': 'FLAT'
+        }
+
+
 def analyze_triple_ema(
-        candles,  # NormalizedCandles
+        candles,
         fast: int = 9,
         medium: int = 21,
         slow: int = 50,
@@ -92,24 +145,7 @@ def analyze_triple_ema(
         compression_max_spread: float = 1.0,
         compression_breakout_volume: float = 2.0
 ) -> Optional[EMAAnalysis]:
-    """
-    Анализ Triple EMA (9/21/50) для определения паттернов
-
-    Args:
-        candles: NormalizedCandles объект
-        fast: Период быстрой EMA (default 9)
-        medium: Период средней EMA (default 21)
-        slow: Период медленной EMA (default 50)
-        min_gap_pct: Минимальный зазор для perfect alignment
-        crossover_lookback: Окно поиска crossover
-        pullback_touch_pct: Допуск касания EMA21 для pullback
-        pullback_volume_min: Минимум volume для pullback
-        compression_max_spread: Максимальный spread для compression
-        compression_breakout_volume: Минимум volume для breakout
-
-    Returns:
-        EMAAnalysis объект или None при ошибке
-    """
+    """Анализ Triple EMA (9/21/50) для определения паттернов"""
     if not candles or not candles.is_valid:
         return None
 
@@ -117,7 +153,6 @@ def analyze_triple_ema(
         return None
 
     try:
-        # Рассчитываем EMA
         ema9 = calculate_ema(candles.closes, fast)
         ema21 = calculate_ema(candles.closes, medium)
         ema50 = calculate_ema(candles.closes, slow)
@@ -127,47 +162,39 @@ def analyze_triple_ema(
         current_ema21 = float(ema21[-1])
         current_ema50 = float(ema50[-1])
 
-        # Volume ratio (для подтверждения)
         from .volume import calculate_volume_ratio
         volume_ratios = calculate_volume_ratio(candles.volumes)
         current_volume_ratio = float(volume_ratios[-1])
 
-        # 1. CHECK ALIGNMENT
         alignment, alignment_score = _check_alignment(
             current_ema9, current_ema21, current_ema50, min_gap_pct
         )
 
-        # 2. CHECK CROSSOVERS
         crossover, crossover_score = _check_crossover(
             ema9, ema21, ema50, crossover_lookback
         )
 
-        # 3. CHECK PULLBACK
         pullback, pullback_score = _check_pullback(
             candles.closes, candles.lows, candles.highs,
             ema21, alignment, current_price, current_ema21,
             pullback_touch_pct, current_volume_ratio, pullback_volume_min
         )
 
-        # 4. CHECK COMPRESSION
         compression, compression_score = _check_compression(
             current_ema9, current_ema50, current_price,
             current_volume_ratio, compression_max_spread, compression_breakout_volume
         )
 
-        # 5. BONUSES
         bonus_score = _calculate_bonuses(
             ema9, ema21, ema50, current_price, current_ema9,
             current_ema50, current_volume_ratio, alignment
         )
 
-        # 6. PENALTIES
         penalty = _calculate_penalties(
             ema21, volume_ratios, current_ema50, current_price,
             ema9, ema21
         )
 
-        # 7. TOTAL CONFIDENCE
         base_confidence = 50
         total_confidence = (
                 base_confidence + alignment_score + crossover_score +
@@ -175,10 +202,8 @@ def analyze_triple_ema(
         )
         total_confidence = max(0, min(100, int(total_confidence)))
 
-        # 8. DISTANCE FROM EMA50
         distance_from_ema50 = abs((current_price - current_ema50) / current_ema50 * 100)
 
-        # 9. BUILD DETAILS
         details = _build_details(
             alignment, crossover, pullback, compression,
             alignment_score, crossover_score, pullback_score,
@@ -204,24 +229,16 @@ def analyze_triple_ema(
 
 
 def _check_alignment(ema9, ema21, ema50, min_gap_pct):
-    """Проверка alignment (выстраивание EMA)"""
+    """Проверка alignment"""
     gap_9_21 = abs((ema9 - ema21) / ema21 * 100)
     gap_21_50 = abs((ema21 - ema50) / ema50 * 100)
 
     if ema9 > ema21 > ema50:
         alignment = 'BULLISH'
-        if gap_9_21 >= min_gap_pct and gap_21_50 >= min_gap_pct:
-            score = 15  # Perfect alignment
-        else:
-            score = 10  # Weak alignment
-
+        score = 15 if (gap_9_21 >= min_gap_pct and gap_21_50 >= min_gap_pct) else 10
     elif ema9 < ema21 < ema50:
         alignment = 'BEARISH'
-        if gap_9_21 >= min_gap_pct and gap_21_50 >= min_gap_pct:
-            score = 15
-        else:
-            score = 10
-
+        score = 15 if (gap_9_21 >= min_gap_pct and gap_21_50 >= min_gap_pct) else 10
     else:
         alignment = 'NEUTRAL'
         score = 0
@@ -230,25 +247,20 @@ def _check_alignment(ema9, ema21, ema50, min_gap_pct):
 
 
 def _check_crossover(ema9, ema21, ema50, lookback):
-    """Проверка crossover (пересечений)"""
+    """Проверка crossover"""
     crossover = 'NONE'
     score = 0
-
     lookback = min(lookback, len(ema9) - 1)
 
     for i in range(1, lookback + 1):
         idx = -i
-
-        # Golden Cross: EMA9 пересекает EMA21 вверх
         if ema9[idx] > ema21[idx] and ema9[idx - 1] <= ema21[idx - 1]:
-            if ema21[idx] > ema50[idx]:  # EMA21 уже выше EMA50
+            if ema21[idx] > ema50[idx]:
                 crossover = 'GOLDEN'
                 score = 12
                 break
-
-        # Death Cross: EMA9 пересекает EMA21 вниз
         elif ema9[idx] < ema21[idx] and ema9[idx - 1] >= ema21[idx - 1]:
-            if ema21[idx] < ema50[idx]:  # EMA21 уже ниже EMA50
+            if ema21[idx] < ema50[idx]:
                 crossover = 'DEATH'
                 score = 12
                 break
@@ -256,15 +268,12 @@ def _check_crossover(ema9, ema21, ema50, lookback):
     return crossover, score
 
 
-def _check_pullback(
-        closes, lows, highs, ema21, alignment, current_price,
-        current_ema21, touch_pct, volume_ratio, volume_min
-):
-    """Проверка pullback к EMA21"""
+def _check_pullback(closes, lows, highs, ema21, alignment, current_price,
+                    current_ema21, touch_pct, volume_ratio, volume_min):
+    """Проверка pullback"""
     pullback = 'NONE'
     score = 0
 
-    # Проверяем последние 3 свечи
     for i in range(1, min(4, len(closes))):
         idx = -i
         low_price = float(lows[idx])
@@ -274,14 +283,11 @@ def _check_pullback(
         touch_upper = ema21_value * (1 + touch_pct / 100)
         touch_lower = ema21_value * (1 - touch_pct / 100)
 
-        # Bullish bounce
         if alignment == 'BULLISH' and touch_lower <= low_price <= touch_upper:
             if current_price > current_ema21 and volume_ratio >= volume_min:
                 pullback = 'BULLISH_BOUNCE'
                 score = 10
                 break
-
-        # Bearish bounce
         elif alignment == 'BEARISH' and touch_lower <= high_price <= touch_upper:
             if current_price < current_ema21 and volume_ratio >= volume_min:
                 pullback = 'BEARISH_BOUNCE'
@@ -291,18 +297,14 @@ def _check_pullback(
     return pullback, score
 
 
-def _check_compression(
-        ema9, ema50, price, volume_ratio, max_spread, breakout_volume
-):
-    """Проверка compression (сжатие EMA)"""
+def _check_compression(ema9, ema50, price, volume_ratio, max_spread, breakout_volume):
+    """Проверка compression"""
     compression = 'NONE'
     score = 0
-
     total_spread = abs((ema9 - ema50) / ema50 * 100)
 
     if total_spread <= max_spread:
         compression = 'COMPRESSED'
-
         if volume_ratio >= breakout_volume:
             if price > max(ema9, ema50):
                 compression = 'BREAKOUT_UP'
@@ -314,14 +316,11 @@ def _check_compression(
     return compression, score
 
 
-def _calculate_bonuses(
-        ema9, ema21, ema50, price, current_ema9,
-        current_ema50, volume_ratio, alignment
-):
-    """Рассчитать бонусные баллы"""
+def _calculate_bonuses(ema9, ema21, ema50, price, current_ema9,
+                       current_ema50, volume_ratio, alignment):
+    """Бонусные баллы"""
     bonus = 0
 
-    # EMA slope согласован
     if alignment == 'BULLISH':
         if ema9[-1] > ema9[-5] and ema21[-1] > ema21[-5] and ema50[-1] > ema50[-5]:
             bonus += 10
@@ -329,50 +328,41 @@ def _calculate_bonuses(
         if ema9[-1] < ema9[-5] and ema21[-1] < ema21[-5] and ema50[-1] < ema50[-5]:
             bonus += 10
 
-    # Цена выше/ниже всех EMA
     if alignment == 'BULLISH' and price > current_ema9:
         bonus += 8
     elif alignment == 'BEARISH' and price < current_ema9:
         bonus += 8
 
-    # Расстояние от EMA50 <3%
     distance = abs((price - current_ema50) / current_ema50 * 100)
     if distance < 3.0:
         bonus += 8
 
-    # Volume spike
     if volume_ratio >= 1.5:
         bonus += 8
 
     return bonus
 
 
-def _calculate_penalties(
-        ema21, volume_ratios, ema50, price, ema9_arr, ema21_arr
-):
-    """Рассчитать штрафы"""
+def _calculate_penalties(ema21, volume_ratios, ema50, price, ema9_arr, ema21_arr):
+    """Штрафы"""
     penalty = 0
 
-    # Flat EMA21
     ema21_slope = abs((ema21[-1] - ema21[-10]) / ema21[-10] * 100)
     if ema21_slope < 0.5:
         penalty -= 10
 
-    # Overextension
     distance = abs((price - ema50) / ema50 * 100)
     if distance > 5.0:
         penalty -= 10
 
-    # Volume dead
     recent_volume = [float(v) for v in volume_ratios[-3:]]
     if all(v < 0.8 for v in recent_volume):
         penalty -= 10
 
-    # Whipsaw zone
     crosses = 0
     for i in range(1, min(11, len(ema9_arr))):
         if (ema9_arr[-i] > ema21_arr[-i] and ema9_arr[-i - 1] <= ema21_arr[-i - 1]) or \
-                (ema9_arr[-i] < ema21_arr[-i] and ema9_arr[-i - 1] >= ema21_arr[-i - 1]):
+           (ema9_arr[-i] < ema21_arr[-i] and ema9_arr[-i - 1] >= ema21_arr[-i - 1]):
             crosses += 1
 
     if crosses >= 3:
@@ -381,29 +371,22 @@ def _calculate_penalties(
     return penalty
 
 
-def _build_details(
-        alignment, crossover, pullback, compression,
-        align_score, cross_score, pull_score, comp_score,
-        bonus, penalty
-):
-    """Построить текстовое описание"""
+def _build_details(alignment, crossover, pullback, compression,
+                   align_score, cross_score, pull_score, comp_score,
+                   bonus, penalty):
+    """Текстовое описание"""
     parts = []
 
     if alignment != 'NEUTRAL':
         parts.append(f"Alignment: {alignment} ({align_score:+d})")
-
     if crossover != 'NONE':
         parts.append(f"Crossover: {crossover} ({cross_score:+d})")
-
     if pullback != 'NONE':
         parts.append(f"Pullback: {pullback} ({pull_score:+d})")
-
     if compression not in ['NONE', 'COMPRESSED']:
         parts.append(f"Compression: {compression} ({comp_score:+d})")
-
     if bonus > 0:
         parts.append(f"Bonuses: {bonus:+d}")
-
     if penalty < 0:
         parts.append(f"Penalties: {penalty:+d}")
 

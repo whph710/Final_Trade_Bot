@@ -1,15 +1,13 @@
 """
-Stage 2: AI Pair Selection - SMC DATA ADAPTATION
+Stage 2: AI Pair Selection - LEVELS + ATR Strategy
 Файл: stages/stage2_selection.py
 
-ИЗМЕНЕНО:
-- Передаём SMC данные (OB, FVG, Sweeps) в AI
-- Упрощённый формат для быстрой селекции
+ОБНОВЛЕНО:
+- Передаём данные о уровнях + ATR волнах
+- Убраны SMC данные (OB, FVG, Sweeps)
 """
 
 import logging
-import asyncio
-import numpy as np
 from typing import List, Dict
 
 logger = logging.getLogger(__name__)
@@ -19,43 +17,35 @@ async def run_stage2(
         candidates: List['SignalCandidate'],
         max_pairs: int = 3
 ) -> List[str]:
-    """
-    Stage 2: AI выбор лучших пар из SMC кандидатов
-    """
+    """Stage 2: AI выбор лучших пар из кандидатов с уровнями + ATR"""
     from data_providers import fetch_multiple_candles, normalize_candles
     from ai.ai_router import AIRouter
     from config import config
     import time
 
     if not candidates:
-        logger.warning("Stage 2 (SMC): No candidates provided")
+        logger.warning("Stage 2 (LEVELS+ATR): No candidates provided")
         return []
 
     logger.info(
-        f"Stage 2 (SMC): Selecting from {len(candidates)} SMC candidates "
+        f"Stage 2 (LEVELS+ATR): Selecting from {len(candidates)} candidates "
         f"(max: {max_pairs})"
     )
 
     start_time = time.time()
 
-    # ===================================================================
-    # ЗАГРУЗКА 1H СВЕЧЕЙ ДЛЯ MULTI-TF АНАЛИЗА
-    # ===================================================================
-    logger.info(f"Stage 2 (SMC): Loading 1H candles for {len(candidates)} pairs...")
+    # Загрузка 1H + 4H свечей
+    logger.info(f"Stage 2: Loading 1H + 4H candles for {len(candidates)} pairs...")
 
     requests = []
     for candidate in candidates:
         symbol = candidate.symbol
-
-        # 1H candles
         requests.append({
             'symbol': symbol,
             'interval': config.TIMEFRAME_SHORT,
             'limit': config.STAGE2_CANDLES_1H,
             'timeframe': '1H'
         })
-
-        # 4H candles
         requests.append({
             'symbol': symbol,
             'interval': config.TIMEFRAME_LONG,
@@ -67,16 +57,14 @@ async def run_stage2(
 
     load_time = time.time() - start_time
     logger.info(
-        f"Stage 2 (SMC): Loaded {len(batch_results)}/{len(requests)} requests "
+        f"Stage 2: Loaded {len(batch_results)}/{len(requests)} requests "
         f"in {load_time:.1f}s"
     )
 
     # Группируем по символам
     candles_by_symbol = _group_candles_by_symbol(batch_results)
 
-    # ===================================================================
-    # ФОРМИРУЕМ SMC DATA ДЛЯ AI
-    # ===================================================================
+    # Формируем AI input data
     ai_input_data = []
     failed_symbols = []
 
@@ -84,7 +72,7 @@ async def run_stage2(
         symbol = candidate.symbol
 
         try:
-            logger.debug(f"Stage 2 (SMC): [{idx}/{len(candidates)}] Processing {symbol}...")
+            logger.debug(f"Stage 2: [{idx}/{len(candidates)}] Processing {symbol}...")
 
             # Получаем свечи
             symbol_data = candles_by_symbol.get(symbol, {})
@@ -93,7 +81,7 @@ async def run_stage2(
             candles_4h_raw = symbol_data.get('4H')
 
             if not candles_1h_raw or not candles_4h_raw:
-                logger.debug(f"Stage 2 (SMC): {symbol} SKIP - Missing candles")
+                logger.debug(f"Stage 2: {symbol} SKIP - Missing candles")
                 failed_symbols.append((symbol, "Missing candles"))
                 continue
 
@@ -126,10 +114,8 @@ async def run_stage2(
                 failed_symbols.append((symbol, "Indicators failed"))
                 continue
 
-            # ============================================================
-            # ФОРМИРУЕМ SMC DATA
-            # ============================================================
-            smc_data = _prepare_smc_data(candidate)
+            # ✅ ФОРМИРУЕМ LEVELS DATA (вместо SMC)
+            levels_data = _prepare_levels_data(candidate)
 
             # Формируем данные для AI
             ai_input_data.append({
@@ -138,13 +124,12 @@ async def run_stage2(
                 'confidence': candidate.confidence,
                 'pattern_type': candidate.pattern_type,
 
-                # SMC Components (упрощённо для Stage 2)
-                'ob_analysis': smc_data['ob_analysis'],
-                'imbalance_analysis': smc_data['imbalance_analysis'],
-                'sweep_analysis': smc_data['sweep_analysis'],
+                # ✅ LEVELS + ATR (вместо SMC)
+                'sr_analysis': levels_data['sr_analysis'],
+                'wave_analysis': levels_data['wave_analysis'],
+                'ema200_context': levels_data['ema200_context'],
 
                 # Context
-                'ema_context': candidate.ema_context,
                 'volume_ratio': candidate.volume_analysis.volume_ratio_current,
                 'rsi_value': candidate.rsi_value,
 
@@ -155,10 +140,10 @@ async def run_stage2(
                 'indicators_4h': indicators_4h
             })
 
-            logger.info(f"Stage 2 (SMC): ✓ {symbol} prepared successfully")
+            logger.info(f"Stage 2: ✓ {symbol} prepared successfully")
 
         except Exception as e:
-            logger.error(f"Stage 2 (SMC): {symbol} ERROR - {e}", exc_info=False)
+            logger.error(f"Stage 2: {symbol} ERROR - {e}", exc_info=False)
             failed_symbols.append((symbol, f"Exception: {str(e)[:50]}"))
             continue
 
@@ -166,7 +151,7 @@ async def run_stage2(
 
     # Логирование результатов
     logger.info("=" * 70)
-    logger.info(f"Stage 2 (SMC): Data preparation complete")
+    logger.info(f"Stage 2: Data preparation complete")
     logger.info(f"  • Successfully prepared: {len(ai_input_data)}/{len(candidates)}")
     logger.info(f"  • Failed: {len(failed_symbols)}/{len(candidates)}")
     logger.info(f"  • Preparation time: {prep_time:.1f}s")
@@ -184,11 +169,11 @@ async def run_stage2(
     logger.info("=" * 70)
 
     if not ai_input_data:
-        logger.error("Stage 2 (SMC): No valid AI input data - CRITICAL FAILURE")
+        logger.error("Stage 2: No valid AI input data - CRITICAL FAILURE")
         return []
 
     logger.info(
-        f"Stage 2 (SMC): Sending {len(ai_input_data)} pairs to AI "
+        f"Stage 2: Sending {len(ai_input_data)} pairs to AI "
         f"(provider: {config.STAGE2_PROVIDER})"
     )
 
@@ -203,73 +188,63 @@ async def run_stage2(
     total_time = time.time() - start_time
 
     logger.info(
-        f"Stage 2 (SMC) complete: AI selected {len(selected_pairs)} pairs "
+        f"Stage 2 complete: AI selected {len(selected_pairs)} pairs "
         f"(total time: {total_time:.1f}s)"
     )
 
     if selected_pairs:
         logger.info(f"Selected: {selected_pairs}")
     else:
-        logger.warning("Stage 2 (SMC): AI selected 0 pairs")
+        logger.warning("Stage 2: AI selected 0 pairs")
 
     return selected_pairs
 
 
-def _prepare_smc_data(candidate: 'SignalCandidate') -> Dict:
+def _prepare_levels_data(candidate: 'SignalCandidate') -> Dict:
     """
-    Подготовить SMC данные в упрощённом формате для AI
+    ✅ НОВОЕ: Подготовить данные уровней + ATR для AI
     """
-    # Order Blocks (упрощённо)
-    ob_data = {
-        'total_blocks': candidate.ob_analysis.total_blocks_found,
-        'bullish_blocks': candidate.ob_analysis.bullish_blocks,
-        'bearish_blocks': candidate.ob_analysis.bearish_blocks
+    # Support/Resistance (упрощённо)
+    sr_data = {
+        'total_levels': len(candidate.sr_analysis.all_levels),
+        'current_zone': candidate.sr_analysis.current_price_zone
     }
 
-    nearest_ob = candidate.ob_analysis.nearest_ob
-    if nearest_ob:
-        ob_data['nearest_ob'] = {
-            'direction': nearest_ob.direction,
-            'distance_pct': nearest_ob.distance_from_current,
-            'is_mitigated': nearest_ob.is_mitigated,
-            'strength': nearest_ob.strength
+    nearest_support = candidate.sr_analysis.nearest_support
+    if nearest_support:
+        sr_data['nearest_support'] = {
+            'price': nearest_support.price,
+            'touches': nearest_support.touches,
+            'strength': nearest_support.strength,
+            'distance_pct': nearest_support.distance_from_current_pct
         }
 
-    # Imbalances (упрощённо)
-    imb_data = {}
-    if candidate.imbalance_analysis:
-        imb_data = {
-            'total_imbalances': candidate.imbalance_analysis.total_imbalances,
-            'unfilled_count': candidate.imbalance_analysis.unfilled_count,
-            'bullish_count': candidate.imbalance_analysis.bullish_count,
-            'bearish_count': candidate.imbalance_analysis.bearish_count
+    nearest_resistance = candidate.sr_analysis.nearest_resistance
+    if nearest_resistance:
+        sr_data['nearest_resistance'] = {
+            'price': nearest_resistance.price,
+            'touches': nearest_resistance.touches,
+            'strength': nearest_resistance.strength,
+            'distance_pct': nearest_resistance.distance_from_current_pct
         }
 
-        nearest_imb = candidate.imbalance_analysis.nearest_imbalance
-        if nearest_imb:
-            imb_data['nearest_imbalance'] = {
-                'direction': nearest_imb.direction,
-                'is_filled': nearest_imb.is_filled,
-                'fill_percentage': nearest_imb.fill_percentage,
-                'distance_pct': nearest_imb.distance_from_current
-            }
+    # Wave Analysis (упрощённо)
+    wave_data = {}
+    if candidate.wave_analysis:
+        wave_data = {
+            'wave_type': candidate.wave_analysis.wave_type,
+            'average_wave_length': candidate.wave_analysis.average_wave_length,
+            'current_progress': candidate.wave_analysis.current_wave_progress,
+            'is_early_entry': candidate.wave_analysis.is_early_entry
+        }
 
-    # Liquidity Sweep (упрощённо)
-    sweep_data = {
-        'sweep_detected': candidate.sweep_analysis.get('sweep_detected', False)
-    }
-
-    if sweep_data['sweep_detected']:
-        sweep_obj = candidate.sweep_analysis.get('sweep_data')
-        if sweep_obj:
-            sweep_data['direction'] = sweep_obj.direction
-            sweep_data['reversal_confirmed'] = sweep_obj.reversal_confirmed
-            sweep_data['volume_confirmation'] = sweep_obj.volume_confirmation
+    # EMA200 Context
+    ema200_data = candidate.ema200_context
 
     return {
-        'ob_analysis': ob_data,
-        'imbalance_analysis': imb_data,
-        'sweep_analysis': sweep_data
+        'sr_analysis': sr_data,
+        'wave_analysis': wave_data,
+        'ema200_context': ema200_data
     }
 
 
@@ -294,7 +269,7 @@ def _group_candles_by_symbol(batch_results: List[Dict]) -> Dict[str, Dict]:
 
 
 def _calculate_compact_indicators(candles, symbol: str = "UNKNOWN", tf: str = "UNKNOWN") -> Dict:
-    """Рассчитать compact indicators (без изменений)"""
+    """Рассчитать compact indicators"""
     try:
         if candles is None or not candles.is_valid:
             return None
@@ -338,7 +313,7 @@ def _calculate_compact_indicators(candles, symbol: str = "UNKNOWN", tf: str = "U
         }
 
     except Exception as e:
-        logger.error(f"Stage 2 (SMC): {symbol} {tf} - Indicators error: {e}")
+        logger.error(f"Stage 2: {symbol} {tf} - Indicators error: {e}")
         return None
 
 

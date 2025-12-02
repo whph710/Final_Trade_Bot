@@ -1,11 +1,14 @@
 """
 Technical Indicators Package
 Модульные индикаторы с единым форматом данных (NormalizedCandles)
+
+ОБНОВЛЕНО: Добавлены Support/Resistance и Wave Analysis
 """
 
 from .ema import (
     calculate_ema,
     analyze_triple_ema,
+    analyze_ema200,  # ✅ НОВОЕ
     EMAAnalysis
 )
 
@@ -30,10 +33,11 @@ from .volume import (
 
 from .atr import (
     calculate_atr,
-    suggest_stop_loss
+    suggest_stop_loss,
+    analyze_waves_atr,  # ✅ НОВОЕ
+    WaveAnalysis
 )
 
-# ✅ ДОБАВЛЕНО: Correlation module
 from .correlation import (
     calculate_correlation,
     analyze_btc_correlation,
@@ -43,7 +47,6 @@ from .correlation import (
     CorrelationAnomalyAnalysis
 )
 
-# ✅ ДОБАВЛЕНО: Volume Profile module
 from .volume_profile import (
     calculate_volume_profile,
     analyze_volume_profile,
@@ -51,33 +54,19 @@ from .volume_profile import (
     VolumeProfileAnalysis
 )
 
-# ✅ ДОБАВЛЕНО: Smart Money Concept - Order Blocks
-from .order_blocks import (
-    find_order_blocks,
-    analyze_order_blocks,
-    OrderBlockData,
-    OrderBlockAnalysis
-)
-
-# ✅ ДОБАВЛЕНО: Smart Money Concept - Imbalances (FVG)
-from .imbalance import (
-    find_imbalances,
-    analyze_imbalances,
-    ImbalanceData,
-    ImbalanceAnalysis
-)
-
-# ✅ ДОБАВЛЕНО: Smart Money Concept - Liquidity Sweeps
-from .liquidity_sweep import (
-    detect_liquidity_sweep,
-    analyze_liquidity_sweep,
-    LiquiditySweepData
+# ✅ НОВОЕ: Support/Resistance Levels
+from .support_resistance import (
+    find_support_resistance_levels,
+    analyze_support_resistance,
+    SupportResistanceLevel,
+    SupportResistanceAnalysis
 )
 
 __all__ = [
     # EMA
     'calculate_ema',
     'analyze_triple_ema',
+    'analyze_ema200',  # ✅ НОВОЕ
     'EMAAnalysis',
 
     # RSI
@@ -99,8 +88,10 @@ __all__ = [
     # ATR
     'calculate_atr',
     'suggest_stop_loss',
+    'analyze_waves_atr',  # ✅ НОВОЕ
+    'WaveAnalysis',
 
-    # ✅ ДОБАВЛЕНО: Correlation
+    # Correlation
     'calculate_correlation',
     'analyze_btc_correlation',
     'detect_correlation_anomaly',
@@ -108,26 +99,15 @@ __all__ = [
     'BTCCorrelationAnalysis',
     'CorrelationAnomalyAnalysis',
 
-    # ✅ ДОБАВЛЕНО: Volume Profile
+    # Volume Profile
     'calculate_volume_profile',
     'analyze_volume_profile',
     'VolumeProfileData',
     'VolumeProfileAnalysis',
 
-    # ✅ ДОБАВЛЕНО: Order Blocks
-    'find_order_blocks',
-    'analyze_order_blocks',
-    'OrderBlockData',
-    'OrderBlockAnalysis',
-
-    # ✅ ДОБАВЛЕНО: Imbalances (FVG)
-    'find_imbalances',
-    'analyze_imbalances',
-    'ImbalanceData',
-    'ImbalanceAnalysis',
-
-    # ✅ ДОБАВЛЕНО: Liquidity Sweeps
-    'detect_liquidity_sweep',
-    'analyze_liquidity_sweep',
-    'LiquiditySweepData',
+    # ✅ НОВОЕ: Support/Resistance
+    'find_support_resistance_levels',
+    'analyze_support_resistance',
+    'SupportResistanceLevel',
+    'SupportResistanceAnalysis',
 ]
