@@ -1,13 +1,7 @@
-"""
-AI Router - WITH LEVELS + ATR SERIALIZATION
-Файл: ai/ai_router.py
-
-✅ ОБНОВЛЕНО: Добавлена сериализация данных уровней + ATR + EMA200
-"""
-
 import logging
 from typing import List, Dict, Optional
 from dataclasses import is_dataclass, asdict
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +88,6 @@ class AIRouter:
                 model=config.ANTHROPIC_MODEL,
                 use_thinking=config.ANTHROPIC_THINKING
             )
-
             return self.claude_client
 
         except ImportError:
@@ -121,9 +114,9 @@ class AIRouter:
             return None, None
 
     async def select_pairs(
-            self,
-            pairs_data: List[Dict],
-            max_pairs: Optional[int] = None
+        self,
+        pairs_data: List[Dict],
+        max_pairs: Optional[int] = None
     ) -> List[str]:
         """Stage 2: Выбор пар через AI"""
         logger.info(
@@ -161,9 +154,9 @@ class AIRouter:
             return []
 
     async def analyze_pair_comprehensive(
-            self,
-            symbol: str,
-            comprehensive_data: Dict
+        self,
+        symbol: str,
+        comprehensive_data: Dict
     ) -> Dict:
         """Stage 3: Comprehensive analysis через AI"""
         logger.debug(f"Stage 3: analyzing {symbol}")
@@ -248,58 +241,34 @@ class AIRouter:
             }
 
     async def _deepseek_comprehensive_analysis(
-            self,
-            symbol: str,
-            comprehensive_data: Dict,
-            client: 'DeepSeekClient',
-            config: Dict
+        self,
+        symbol: str,
+        comprehensive_data: Dict,
+        client: 'DeepSeekClient',
+        config: Dict
     ) -> Dict:
-        """
-        ✅ ОБНОВЛЕНО: DeepSeek comprehensive analysis с LEVELS + ATR данными
-        """
         import json
 
         try:
             from ai.deepseek_client import load_prompt_cached
             from config import config as app_config
 
-            # Загружаем промпт (БЕЗ изменения имени файла)
             system_prompt = load_prompt_cached("prompt_analyze.txt")
-
-            # Проверяем forced_direction
             forced_direction = comprehensive_data.get('forced_direction')
 
             if forced_direction:
-                logger.info(
-                    f"Stage 3 {symbol}: FORCED DIRECTION = {forced_direction}"
+                system_prompt += (
+                    f"\n\nCRITICAL INSTRUCTION:\n"
+                    f"Analyze only {forced_direction} opportunities. "
+                    f"If conditions do not support {forced_direction}, return NO_SIGNAL.\n"
                 )
 
-                direction_instruction = (
-                    f"\n\n🎯 CRITICAL INSTRUCTION FOR THIS ANALYSIS:\n"
-                    f"User specifically requested {forced_direction} signal analysis.\n"
-                    f"You MUST analyze ONLY {forced_direction} opportunities.\n"
-                    f"If {forced_direction} setup is not viable based on technical analysis, "
-                    f"return NO_SIGNAL with detailed rejection_reason explaining why {forced_direction} "
-                    f"is not suitable at current market conditions.\n"
-                    f"DO NOT suggest opposite direction under any circumstances."
-                )
-                system_prompt = system_prompt + direction_instruction
-
-            # Свечи (обрезанные)
             candles_1h = comprehensive_data.get('candles_1h', [])
             candles_4h = comprehensive_data.get('candles_4h', [])
 
             candles_1h_trimmed = candles_1h[-app_config.STAGE3_CANDLES_1H:] if candles_1h else []
             candles_4h_trimmed = candles_4h[-app_config.STAGE3_CANDLES_4H:] if candles_4h else []
 
-            logger.debug(
-                f"Stage 3 {symbol}: Candles trimmed to "
-                f"1H={len(candles_1h_trimmed)}, 4H={len(candles_4h_trimmed)}"
-            )
-
-            # ============================================================
-            # ✅ ОБНОВЛЕНО: Добавляем LEVELS + ATR данные
-            # ============================================================
             analysis_data = {
                 'symbol': symbol,
                 'candles_1h': candles_1h_trimmed,
@@ -308,7 +277,6 @@ class AIRouter:
                 'indicators_4h': comprehensive_data.get('indicators_4h', {}),
                 'current_price': comprehensive_data.get('current_price', 0),
 
-                # ✅ НОВОЕ: Уровни + ATR + EMA200
                 'support_resistance_4h': self._serialize_to_json(
                     comprehensive_data.get('support_resistance_4h')
                 ),
@@ -319,7 +287,6 @@ class AIRouter:
                     comprehensive_data.get('ema200_context_4h')
                 ),
 
-                # Market data
                 'market_data': comprehensive_data.get('market_data', {}),
                 'correlation_data': self._serialize_to_json(
                     comprehensive_data.get('correlation_data', {})
@@ -331,7 +298,6 @@ class AIRouter:
                     comprehensive_data.get('vp_analysis')
                 ),
 
-                # SMC (optional для compatibility)
                 'order_blocks': self._serialize_to_json(
                     comprehensive_data.get('order_blocks')
                 ),
@@ -346,36 +312,26 @@ class AIRouter:
                 'btc_candles_4h': comprehensive_data.get('btc_candles_4h', [])[-60:]
             }
 
-            # Добавляем forced_direction если есть
             if forced_direction:
                 analysis_data['forced_direction'] = forced_direction
 
-            data_json = json.dumps(analysis_data, separators=(',', ':'))
-
-            logger.debug(
-                f"Stage 3 {symbol}: analysis data size = {len(data_json)} chars "
-                f"(Levels={'✓' if analysis_data.get('support_resistance_4h') else '✗'}, "
-                f"ATR={'✓' if analysis_data.get('wave_analysis_4h') else '✗'}, "
-                f"EMA200={'✓' if analysis_data.get('ema200_context_4h') else '✗'})"
+            data_json = json.dumps(
+                analysis_data,
+                separators=(',', ':'),
+                default=self._json_serializer
             )
 
-            # Формируем промпт
             user_prompt = f"{system_prompt}\n\nData:\n{data_json}"
 
-            # Вызов DeepSeek
             response = await client.chat(
                 messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert institutional swing trader with 20 years experience."
-                    },
+                    {"role": "system", "content": "You are an expert trader."},
                     {"role": "user", "content": user_prompt}
                 ],
                 max_tokens=config['max_tokens'],
                 temperature=config['temperature']
             )
 
-            # Парсинг JSON из ответа
             result = self._extract_json_from_response(response)
 
             if not result:
@@ -388,8 +344,6 @@ class AIRouter:
                 }
 
             result['symbol'] = symbol
-
-            # Нормализация take_profit_levels
             result = self._normalize_take_profit_levels(result, symbol)
 
             return result
@@ -405,14 +359,45 @@ class AIRouter:
                 'rejection_reason': f'DeepSeek exception: {str(e)[:100]}'
             }
 
+    def _serialize_to_json(self, obj):
+        if obj is None:
+            return None
+        if is_dataclass(obj):
+            return self._serialize_to_json(asdict(obj))
+        if isinstance(obj, dict):
+            return {k: self._serialize_to_json(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [self._serialize_to_json(item) for item in obj]
+        if isinstance(obj, (np.integer, np.floating)):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, bool):
+            return bool(obj)
+        if isinstance(obj, (int, float, str)):
+            return obj
+        try:
+            return str(obj)
+        except:
+            return None
+
+    def _json_serializer(self, obj):
+        if isinstance(obj, (np.integer, np.floating)):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, bool):
+            return bool(obj)
+        if is_dataclass(obj):
+            return asdict(obj)
+        return str(obj)
+
     def _normalize_take_profit_levels(self, result: Dict, symbol: str) -> Dict:
-        """Нормализация take_profit_levels с полной защитой от None"""
         try:
             tp_levels = result.get('take_profit_levels')
             entry_price = result.get('entry_price', 0)
 
             if tp_levels is None:
-                logger.warning(f"{symbol}: take_profit_levels is None, generating defaults")
                 if entry_price > 0:
                     result['take_profit_levels'] = [
                         entry_price * 1.02,
@@ -424,9 +409,6 @@ class AIRouter:
                 return result
 
             if not isinstance(tp_levels, list):
-                logger.warning(
-                    f"{symbol}: take_profit_levels is not list ({type(tp_levels).__name__}), converting"
-                )
                 try:
                     single_tp = float(tp_levels)
                     result['take_profit_levels'] = [
@@ -434,7 +416,7 @@ class AIRouter:
                         single_tp * 1.1,
                         single_tp * 1.2
                     ]
-                except (ValueError, TypeError):
+                except:
                     if entry_price > 0:
                         result['take_profit_levels'] = [
                             entry_price * 1.02,
@@ -446,7 +428,6 @@ class AIRouter:
                 return result
 
             if len(tp_levels) == 0:
-                logger.warning(f"{symbol}: take_profit_levels is empty list")
                 if entry_price > 0:
                     result['take_profit_levels'] = [
                         entry_price * 1.02,
@@ -458,25 +439,16 @@ class AIRouter:
                 return result
 
             if len(tp_levels) < 3:
-                logger.debug(
-                    f"{symbol}: take_profit_levels has {len(tp_levels)} elements, extending to 3"
-                )
-
-                valid_tps = []
+                valid = []
                 for tp in tp_levels:
-                    if tp is not None:
-                        try:
-                            tp_float = float(tp)
-                            if not (tp_float == 0 or tp_float < 0):
-                                valid_tps.append(tp_float)
-                        except (ValueError, TypeError):
-                            pass
-
-                if valid_tps:
-                    while len(valid_tps) < 3:
-                        last_tp = valid_tps[-1]
-                        valid_tps.append(last_tp * 1.1)
-                    result['take_profit_levels'] = valid_tps
+                    try:
+                        valid.append(float(tp))
+                    except:
+                        pass
+                if valid:
+                    while len(valid) < 3:
+                        valid.append(valid[-1] * 1.1)
+                    result['take_profit_levels'] = valid
                 else:
                     if entry_price > 0:
                         result['take_profit_levels'] = [
@@ -486,45 +458,20 @@ class AIRouter:
                         ]
                     else:
                         result['take_profit_levels'] = [0, 0, 0]
-
                 return result
 
-            cleaned_tps = []
-            for i, tp in enumerate(tp_levels[:3]):
-                if tp is None:
-                    logger.warning(f"{symbol}: Found None in take_profit_levels at index {i}")
-                    if cleaned_tps:
-                        cleaned_tps.append(cleaned_tps[-1] * 1.1)
-                    elif entry_price > 0:
-                        cleaned_tps.append(entry_price * (1.02 + i * 0.02))
-                    else:
-                        cleaned_tps.append(0)
-                else:
-                    try:
-                        tp_float = float(tp)
-                        cleaned_tps.append(tp_float)
-                    except (ValueError, TypeError):
-                        logger.warning(f"{symbol}: Could not convert TP to float: {tp}")
-                        if cleaned_tps:
-                            cleaned_tps.append(cleaned_tps[-1] * 1.1)
-                        elif entry_price > 0:
-                            cleaned_tps.append(entry_price * (1.02 + i * 0.02))
-                        else:
-                            cleaned_tps.append(0)
+            cleaned = []
+            for tp in tp_levels[:3]:
+                try:
+                    cleaned.append(float(tp))
+                except:
+                    cleaned.append(cleaned[-1] * 1.1 if cleaned else 0)
 
-            result['take_profit_levels'] = cleaned_tps
-
-            logger.debug(
-                f"{symbol}: Normalized take_profit_levels = {cleaned_tps}"
-            )
-
+            result['take_profit_levels'] = cleaned
             return result
 
         except Exception as e:
-            logger.error(f"{symbol}: CRITICAL Error normalizing take_profit_levels: {e}")
-            import traceback
-            traceback.print_exc()
-
+            logger.error(f"{symbol}: Error normalizing TP: {e}")
             entry_price = result.get('entry_price', 0)
             if entry_price > 0:
                 result['take_profit_levels'] = [
@@ -534,37 +481,16 @@ class AIRouter:
                 ]
             else:
                 result['take_profit_levels'] = [0, 0, 0]
-
             return result
 
-    def _serialize_to_json(self, obj):
-        """Рекурсивная сериализация dataclass → dict"""
-        if obj is None:
-            return None
-
-        if is_dataclass(obj):
-            return asdict(obj)
-
-        if isinstance(obj, dict):
-            return {k: self._serialize_to_json(v) for k, v in obj.items()}
-
-        if isinstance(obj, (list, tuple)):
-            return [self._serialize_to_json(item) for item in obj]
-
-        return obj
-
     def _extract_json_from_response(self, text: str) -> Optional[Dict]:
-        """Извлечь JSON из ответа"""
         from ai.anthropic_client import AnthropicClient
-
-        temp_client = type('obj', (object,), {
+        temp = type('obj', (object,), {
             '_extract_json_from_response': AnthropicClient._extract_json_from_response
         })()
-
-        return temp_client._extract_json_from_response(text)
+        return temp._extract_json_from_response(text)
 
     def get_config(self) -> Dict:
-        """Получить текущую конфигурацию"""
         return {
             'stage_providers': self.stage_providers,
             'stage_configs': self.stage_configs
