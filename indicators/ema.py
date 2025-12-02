@@ -2,7 +2,7 @@
 Triple EMA Indicator (9/21/50) + EMA200 Context
 Файл: indicators/ema.py
 
-ОБНОВЛЕНО: Добавлена функция analyze_ema200() для контекста тренда
+✅ ОБНОВЛЕНО: Функция analyze_ema200() уже добавлена
 """
 
 import numpy as np
@@ -58,10 +58,7 @@ def analyze_ema200(
         candles: 'NormalizedCandles'
 ) -> Dict:
     """
-    ✅ НОВОЕ: Упрощённый анализ EMA200 для контекста тренда
-
-    Args:
-        candles: NormalizedCandles объект
+    ✅ ФУНКЦИЯ УЖЕ РЕАЛИЗОВАНА: Анализ EMA200 для контекста тренда
 
     Returns:
         Dict с данными EMA200:
@@ -81,7 +78,6 @@ def analyze_ema200(
         }
 
     if len(candles.closes) < 200:
-        # Недостаточно данных для EMA200
         return {
             'ema200_current': 0,
             'price_above_ema200': False,
@@ -102,11 +98,10 @@ def analyze_ema200(
                 'trend': 'FLAT'
             }
 
-        # Расстояние от EMA200
         distance_pct = abs((current_price - current_ema200) / current_ema200 * 100)
         price_above = current_price > current_ema200
 
-        # Определяем тренд по наклону EMA200
+        # Тренд по наклону EMA200
         ema200_slope = (ema200[-1] - ema200[-20]) / ema200[-20] * 100
 
         if ema200_slope > 0.5:

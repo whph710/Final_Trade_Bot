@@ -1,12 +1,8 @@
 """
-AI Router - FIXED VERSION
+AI Router - WITH LEVELS + ATR SERIALIZATION
 Файл: ai/ai_router.py
 
-✅ ИСПРАВЛЕНО:
-1. Добавлены SMC данные (order_blocks, imbalances, liquidity_sweep) в DeepSeek Stage 3
-2. Исправлена обрезка свечей: 200 для 1H, 100 для 4H (вместо 100/60)
-3. Добавлена _serialize_to_json() для корректной сериализации dataclass
-4. КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Улучшена нормализация take_profit_levels с полной проверкой на None
+✅ ОБНОВЛЕНО: Добавлена сериализация данных уровней + ATR + EMA200
 """
 
 import logging
@@ -259,7 +255,7 @@ class AIRouter:
             config: Dict
     ) -> Dict:
         """
-        ✅ ИСПРАВЛЕНО: DeepSeek comprehensive analysis с SMC данными
+        ✅ ОБНОВЛЕНО: DeepSeek comprehensive analysis с LEVELS + ATR данными
         """
         import json
 
@@ -267,7 +263,7 @@ class AIRouter:
             from ai.deepseek_client import load_prompt_cached
             from config import config as app_config
 
-            # Загружаем промпт
+            # Загружаем промпт (БЕЗ изменения имени файла)
             system_prompt = load_prompt_cached("prompt_analyze.txt")
 
             # Проверяем forced_direction
@@ -289,24 +285,20 @@ class AIRouter:
                 )
                 system_prompt = system_prompt + direction_instruction
 
-            # ============================================================
-            # ✅ ИСПРАВЛЕНИЕ #2 + #3: Правильная обрезка свечей
-            # ============================================================
+            # Свечи (обрезанные)
             candles_1h = comprehensive_data.get('candles_1h', [])
             candles_4h = comprehensive_data.get('candles_4h', [])
 
-            # Используем значения из config (200 для 1H, 100 для 4H)
             candles_1h_trimmed = candles_1h[-app_config.STAGE3_CANDLES_1H:] if candles_1h else []
             candles_4h_trimmed = candles_4h[-app_config.STAGE3_CANDLES_4H:] if candles_4h else []
 
             logger.debug(
                 f"Stage 3 {symbol}: Candles trimmed to "
-                f"1H={len(candles_1h_trimmed)} (target: {app_config.STAGE3_CANDLES_1H}), "
-                f"4H={len(candles_4h_trimmed)} (target: {app_config.STAGE3_CANDLES_4H})"
+                f"1H={len(candles_1h_trimmed)}, 4H={len(candles_4h_trimmed)}"
             )
 
             # ============================================================
-            # ✅ ИСПРАВЛЕНИЕ #1: Добавляем SMC данные
+            # ✅ ОБНОВЛЕНО: Добавляем LEVELS + ATR данные
             # ============================================================
             analysis_data = {
                 'symbol': symbol,
@@ -315,6 +307,19 @@ class AIRouter:
                 'indicators_1h': comprehensive_data.get('indicators_1h', {}),
                 'indicators_4h': comprehensive_data.get('indicators_4h', {}),
                 'current_price': comprehensive_data.get('current_price', 0),
+
+                # ✅ НОВОЕ: Уровни + ATR + EMA200
+                'support_resistance_4h': self._serialize_to_json(
+                    comprehensive_data.get('support_resistance_4h')
+                ),
+                'wave_analysis_4h': self._serialize_to_json(
+                    comprehensive_data.get('wave_analysis_4h')
+                ),
+                'ema200_context_4h': self._serialize_to_json(
+                    comprehensive_data.get('ema200_context_4h')
+                ),
+
+                # Market data
                 'market_data': comprehensive_data.get('market_data', {}),
                 'correlation_data': self._serialize_to_json(
                     comprehensive_data.get('correlation_data', {})
@@ -326,7 +331,7 @@ class AIRouter:
                     comprehensive_data.get('vp_analysis')
                 ),
 
-                # ✅ ДОБАВЛЕНО: SMC данные
+                # SMC (optional для compatibility)
                 'order_blocks': self._serialize_to_json(
                     comprehensive_data.get('order_blocks')
                 ),
@@ -349,9 +354,9 @@ class AIRouter:
 
             logger.debug(
                 f"Stage 3 {symbol}: analysis data size = {len(data_json)} chars "
-                f"(SMC included: OB={'✓' if comprehensive_data.get('order_blocks') else '✗'}, "
-                f"FVG={'✓' if comprehensive_data.get('imbalances') else '✗'}, "
-                f"Sweep={'✓' if comprehensive_data.get('liquidity_sweep') else '✗'})"
+                f"(Levels={'✓' if analysis_data.get('support_resistance_4h') else '✗'}, "
+                f"ATR={'✓' if analysis_data.get('wave_analysis_4h') else '✗'}, "
+                f"EMA200={'✓' if analysis_data.get('ema200_context_4h') else '✗'})"
             )
 
             # Формируем промпт
@@ -384,7 +389,7 @@ class AIRouter:
 
             result['symbol'] = symbol
 
-            # ✅ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Нормализация take_profit_levels
+            # Нормализация take_profit_levels
             result = self._normalize_take_profit_levels(result, symbol)
 
             return result
@@ -401,16 +406,11 @@ class AIRouter:
             }
 
     def _normalize_take_profit_levels(self, result: Dict, symbol: str) -> Dict:
-        """
-        ✅ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Нормализация take_profit_levels с полной защитой от None
-        """
+        """Нормализация take_profit_levels с полной защитой от None"""
         try:
             tp_levels = result.get('take_profit_levels')
             entry_price = result.get('entry_price', 0)
 
-            # ============================================================
-            # СЛУЧАЙ 1: None или отсутствует
-            # ============================================================
             if tp_levels is None:
                 logger.warning(f"{symbol}: take_profit_levels is None, generating defaults")
                 if entry_price > 0:
@@ -423,9 +423,6 @@ class AIRouter:
                     result['take_profit_levels'] = [0, 0, 0]
                 return result
 
-            # ============================================================
-            # СЛУЧАЙ 2: Не список
-            # ============================================================
             if not isinstance(tp_levels, list):
                 logger.warning(
                     f"{symbol}: take_profit_levels is not list ({type(tp_levels).__name__}), converting"
@@ -448,9 +445,6 @@ class AIRouter:
                         result['take_profit_levels'] = [0, 0, 0]
                 return result
 
-            # ============================================================
-            # СЛУЧАЙ 3: Пустой список
-            # ============================================================
             if len(tp_levels) == 0:
                 logger.warning(f"{symbol}: take_profit_levels is empty list")
                 if entry_price > 0:
@@ -463,15 +457,11 @@ class AIRouter:
                     result['take_profit_levels'] = [0, 0, 0]
                 return result
 
-            # ============================================================
-            # СЛУЧАЙ 4: Список меньше 3 элементов
-            # ============================================================
             if len(tp_levels) < 3:
                 logger.debug(
                     f"{symbol}: take_profit_levels has {len(tp_levels)} elements, extending to 3"
                 )
 
-                # Фильтруем валидные значения
                 valid_tps = []
                 for tp in tp_levels:
                     if tp is not None:
@@ -482,14 +472,12 @@ class AIRouter:
                         except (ValueError, TypeError):
                             pass
 
-                # Если есть хоть один валидный - расширяем
                 if valid_tps:
                     while len(valid_tps) < 3:
                         last_tp = valid_tps[-1]
                         valid_tps.append(last_tp * 1.1)
                     result['take_profit_levels'] = valid_tps
                 else:
-                    # Нет валидных - генерируем defaults
                     if entry_price > 0:
                         result['take_profit_levels'] = [
                             entry_price * 1.02,
@@ -501,14 +489,10 @@ class AIRouter:
 
                 return result
 
-            # ============================================================
-            # СЛУЧАЙ 5: Список из 3+ элементов - проверяем на None
-            # ============================================================
             cleaned_tps = []
             for i, tp in enumerate(tp_levels[:3]):
                 if tp is None:
                     logger.warning(f"{symbol}: Found None in take_profit_levels at index {i}")
-                    # Генерируем fallback значение
                     if cleaned_tps:
                         cleaned_tps.append(cleaned_tps[-1] * 1.1)
                     elif entry_price > 0:
@@ -541,7 +525,6 @@ class AIRouter:
             import traceback
             traceback.print_exc()
 
-            # Полный fallback
             entry_price = result.get('entry_price', 0)
             if entry_price > 0:
                 result['take_profit_levels'] = [
@@ -555,25 +538,19 @@ class AIRouter:
             return result
 
     def _serialize_to_json(self, obj):
-        """
-        ✅ ИСПРАВЛЕНИЕ #4: Рекурсивная сериализация dataclass → dict
-        """
+        """Рекурсивная сериализация dataclass → dict"""
         if obj is None:
             return None
 
-        # Dataclass → dict
         if is_dataclass(obj):
             return asdict(obj)
 
-        # Dict → рекурсивно
         if isinstance(obj, dict):
             return {k: self._serialize_to_json(v) for k, v in obj.items()}
 
-        # List/Tuple → рекурсивно
         if isinstance(obj, (list, tuple)):
             return [self._serialize_to_json(item) for item in obj]
 
-        # Примитивы
         return obj
 
     def _extract_json_from_response(self, text: str) -> Optional[Dict]:

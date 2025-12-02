@@ -1,9 +1,9 @@
 """
-Stage 3: Comprehensive Analysis - FIXED VERSION
+Stage 3: Comprehensive Analysis - WITH LEVELS + ATR DATA
 Файл: stages/stage3_analysis.py
 
-✅ ИСПРАВЛЕНО:
-- Проблема #7: Добавлена проверка длины массивов индикаторов перед срезом
+✅ ДОПОЛНЕНО: Добавлены данные уровней + ATR в comprehensive_data
+❗ SMC данные сохранены для compatibility
 """
 
 import logging
@@ -120,7 +120,7 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 })
                 continue
 
-            # ✅ ИСПРАВЛЕНО: Рассчитываем полные индикаторы с проверкой длины
+            # Рассчитываем полные индикаторы
             indicators_1h = _calculate_full_indicators(candles_1h)
             indicators_4h = _calculate_full_indicators(candles_4h)
 
@@ -134,7 +134,32 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
 
             current_price = float(candles_1h.closes[-1])
 
+            # ============================================================
+            # ✅ НОВОЕ: УРОВНИ + ATR + EMA200
+            # ============================================================
+            logger.debug(f"Stage 3: {symbol} - Analyzing S/R levels + ATR")
+            from indicators import (
+                analyze_support_resistance,
+                analyze_waves_atr,
+                analyze_ema200
+            )
+
+            # Support/Resistance на 4H
+            sr_analysis_4h = analyze_support_resistance(
+                candles_4h,
+                current_price,
+                signal_direction='UNKNOWN'
+            )
+
+            # Wave Analysis на 4H
+            wave_analysis_4h = analyze_waves_atr(candles_4h, num_waves=5)
+
+            # EMA200 на 4H
+            ema200_context_4h = analyze_ema200(candles_4h)
+
+            # ============================================================
             # MARKET DATA
+            # ============================================================
             logger.debug(f"Stage 3: {symbol} - Loading market data")
             market_data = await get_market_snapshot(symbol, session)
 
@@ -156,9 +181,13 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
             vp_data = calculate_volume_profile(candles_4h, num_bins=50)
             vp_analysis = analyze_volume_profile(vp_data, current_price) if vp_data else None
 
-            # SMC: ORDER BLOCKS
-            logger.debug(f"Stage 3: {symbol} - Detecting Order Blocks")
+            # ============================================================
+            # SMC (OPTIONAL - для compatibility)
+            # ============================================================
+            logger.debug(f"Stage 3: {symbol} - Detecting SMC patterns (optional)")
             from indicators.order_blocks import analyze_order_blocks
+            from indicators.imbalance import analyze_imbalances
+            from indicators.liquidity_sweep import analyze_liquidity_sweep
 
             ob_analysis = analyze_order_blocks(
                 candles_4h,
@@ -167,10 +196,6 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 lookback=50
             )
 
-            # SMC: IMBALANCES
-            logger.debug(f"Stage 3: {symbol} - Detecting Imbalances")
-            from indicators.imbalance import analyze_imbalances
-
             imbalance_analysis = analyze_imbalances(
                 candles_4h,
                 current_price,
@@ -178,16 +203,14 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 lookback=50
             )
 
-            # SMC: LIQUIDITY SWEEPS
-            logger.debug(f"Stage 3: {symbol} - Detecting Liquidity Sweeps")
-            from indicators.liquidity_sweep import analyze_liquidity_sweep
-
             sweep_analysis = analyze_liquidity_sweep(
                 candles_1h,
                 signal_direction='UNKNOWN'
             )
 
+            # ============================================================
             # СОБИРАЕМ COMPREHENSIVE DATA
+            # ============================================================
             comprehensive_data = {
                 'symbol': symbol,
                 'candles_1h': candles_1h_raw,
@@ -195,25 +218,35 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 'indicators_1h': indicators_1h,
                 'indicators_4h': indicators_4h,
                 'current_price': current_price,
+
+                # ✅ НОВОЕ: Уровни + ATR + EMA200
+                'support_resistance_4h': sr_analysis_4h,
+                'wave_analysis_4h': wave_analysis_4h,
+                'ema200_context_4h': ema200_context_4h,
+
+                # Market data
                 'market_data': market_data,
                 'correlation_data': correlation_data,
                 'volume_profile': vp_data,
                 'vp_analysis': vp_analysis,
+
+                # SMC (optional compatibility)
                 'order_blocks': ob_analysis,
                 'imbalances': imbalance_analysis,
                 'liquidity_sweep': sweep_analysis,
+
+                # BTC context
                 'btc_candles_1h': btc_candles_1h_raw,
                 'btc_candles_4h': btc_candles_4h_raw
             }
 
             logger.debug(
                 f"Stage 3: {symbol} - Comprehensive data assembled: "
-                f"market_data={'✓' if market_data else '✗'}, "
-                f"correlation={'✓' if correlation_data else '✗'}, "
-                f"volume_profile={'✓' if vp_data else '✗'}, "
-                f"order_blocks={'✓' if ob_analysis else '✗'}, "
-                f"imbalances={'✓' if imbalance_analysis else '✗'}, "
-                f"liquidity_sweep={'✓' if sweep_analysis else '✗'}"
+                f"sr={'✓' if sr_analysis_4h else '✗'}, "
+                f"waves={'✓' if wave_analysis_4h else '✗'}, "
+                f"ema200={'✓' if ema200_context_4h else '✗'}, "
+                f"market={'✓' if market_data else '✗'}, "
+                f"corr={'✓' if correlation_data else '✗'}"
             )
 
             # AI анализ
@@ -355,6 +388,23 @@ async def analyze_single_pair(
 
         current_price = float(candles_1h.closes[-1])
 
+        # ✅ НОВОЕ: Уровни + ATR + EMA200
+        logger.debug(f"{symbol} - Analyzing S/R levels + ATR")
+        from indicators import (
+            analyze_support_resistance,
+            analyze_waves_atr,
+            analyze_ema200
+        )
+
+        sr_analysis_4h = analyze_support_resistance(
+            candles_4h,
+            current_price,
+            signal_direction=direction
+        )
+
+        wave_analysis_4h = analyze_waves_atr(candles_4h, num_waves=5)
+        ema200_context_4h = analyze_ema200(candles_4h)
+
         # Market Data
         logger.debug(f"{symbol} - Loading market data")
         session = await get_session()
@@ -378,9 +428,11 @@ async def analyze_single_pair(
         vp_data = calculate_volume_profile(candles_4h, num_bins=50)
         vp_analysis = analyze_volume_profile(vp_data, current_price) if vp_data else None
 
-        # SMC: Order Blocks
-        logger.debug(f"{symbol} - Detecting Order Blocks")
+        # SMC (optional)
+        logger.debug(f"{symbol} - Detecting SMC patterns")
         from indicators.order_blocks import analyze_order_blocks
+        from indicators.imbalance import analyze_imbalances
+        from indicators.liquidity_sweep import analyze_liquidity_sweep
 
         ob_analysis = analyze_order_blocks(
             candles_4h,
@@ -389,20 +441,12 @@ async def analyze_single_pair(
             lookback=50
         )
 
-        # SMC: Imbalances
-        logger.debug(f"{symbol} - Detecting Imbalances")
-        from indicators.imbalance import analyze_imbalances
-
         imbalance_analysis = analyze_imbalances(
             candles_4h,
             current_price,
             signal_direction=direction,
             lookback=50
         )
-
-        # SMC: Liquidity Sweeps
-        logger.debug(f"{symbol} - Detecting Liquidity Sweeps")
-        from indicators.liquidity_sweep import analyze_liquidity_sweep
 
         sweep_analysis = analyze_liquidity_sweep(
             candles_1h,
@@ -417,6 +461,12 @@ async def analyze_single_pair(
             'indicators_1h': indicators_1h,
             'indicators_4h': indicators_4h,
             'current_price': current_price,
+
+            # ✅ НОВОЕ: Уровни + ATR + EMA200
+            'support_resistance_4h': sr_analysis_4h,
+            'wave_analysis_4h': wave_analysis_4h,
+            'ema200_context_4h': ema200_context_4h,
+
             'market_data': market_data,
             'correlation_data': correlation_data,
             'volume_profile': vp_data,
@@ -519,9 +569,7 @@ async def _load_candles(symbol: str) -> tuple:
 
 
 def _calculate_full_indicators(candles) -> Dict:
-    """
-    ✅ ИСПРАВЛЕНО: Рассчитать полные индикаторы с проверкой длины массивов
-    """
+    """Рассчитать полные индикаторы"""
     from indicators.ema import calculate_ema
     from indicators.rsi import calculate_rsi
     from indicators.macd import calculate_macd
@@ -551,7 +599,6 @@ def _calculate_full_indicators(candles) -> Dict:
 
         history_length = config.FINAL_INDICATORS_HISTORY
 
-        # ✅ ИСПРАВЛЕНИЕ #7: Проверяем длину массивов перед срезом
         def safe_slice(array, length):
             """Безопасный срез массива"""
             actual_length = min(length, len(array))

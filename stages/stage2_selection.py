@@ -2,9 +2,7 @@
 Stage 2: AI Pair Selection - LEVELS + ATR Strategy
 Файл: stages/stage2_selection.py
 
-ОБНОВЛЕНО:
-- Передаём данные о уровнях + ATR волнах
-- Убраны SMC данные (OB, FVG, Sweeps)
+✅ ФИНАЛЬНАЯ ВЕРСИЯ с правильной подготовкой данных уровней + ATR
 """
 
 import logging
@@ -114,7 +112,7 @@ async def run_stage2(
                 failed_symbols.append((symbol, "Indicators failed"))
                 continue
 
-            # ✅ ФОРМИРУЕМ LEVELS DATA (вместо SMC)
+            # ✅ ФОРМИРУЕМ LEVELS DATA
             levels_data = _prepare_levels_data(candidate)
 
             # Формируем данные для AI
@@ -124,7 +122,7 @@ async def run_stage2(
                 'confidence': candidate.confidence,
                 'pattern_type': candidate.pattern_type,
 
-                # ✅ LEVELS + ATR (вместо SMC)
+                # ✅ LEVELS + ATR + EMA200
                 'sr_analysis': levels_data['sr_analysis'],
                 'wave_analysis': levels_data['wave_analysis'],
                 'ema200_context': levels_data['ema200_context'],
@@ -202,7 +200,7 @@ async def run_stage2(
 
 def _prepare_levels_data(candidate: 'SignalCandidate') -> Dict:
     """
-    ✅ НОВОЕ: Подготовить данные уровней + ATR для AI
+    ✅ Подготовить данные уровней + ATR для AI (компактный формат)
     """
     # Support/Resistance (упрощённо)
     sr_data = {
@@ -218,6 +216,8 @@ def _prepare_levels_data(candidate: 'SignalCandidate') -> Dict:
             'strength': nearest_support.strength,
             'distance_pct': nearest_support.distance_from_current_pct
         }
+    else:
+        sr_data['nearest_support'] = None
 
     nearest_resistance = candidate.sr_analysis.nearest_resistance
     if nearest_resistance:
@@ -227,6 +227,8 @@ def _prepare_levels_data(candidate: 'SignalCandidate') -> Dict:
             'strength': nearest_resistance.strength,
             'distance_pct': nearest_resistance.distance_from_current_pct
         }
+    else:
+        sr_data['nearest_resistance'] = None
 
     # Wave Analysis (упрощённо)
     wave_data = {}
@@ -236,6 +238,13 @@ def _prepare_levels_data(candidate: 'SignalCandidate') -> Dict:
             'average_wave_length': candidate.wave_analysis.average_wave_length,
             'current_progress': candidate.wave_analysis.current_wave_progress,
             'is_early_entry': candidate.wave_analysis.is_early_entry
+        }
+    else:
+        wave_data = {
+            'wave_type': 'NEUTRAL',
+            'average_wave_length': 0,
+            'current_progress': 0,
+            'is_early_entry': False
         }
 
     # EMA200 Context

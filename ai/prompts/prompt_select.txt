@@ -35,9 +35,5 @@ SWING TRADING PAIR SELECTION — УРОВНИ + ATR 2025
 
 JSON:
 {
-  "selected_pairs": ["BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "LTCUSDT"],
-}
-
-{
-  "selected_pairs": [],
+  "selected_pairs": ["BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "LTCUSDT"]
 }
