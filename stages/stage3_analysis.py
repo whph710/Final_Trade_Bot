@@ -189,7 +189,6 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                     'rejection_reason': rejection_reason
                 })
                 logger.info(f"Stage 3: ✗ REJECTED {symbol} - {rejection_reason}")
-
         except Exception as e:
             logger.error(f"Stage 3: Error analyzing {symbol}: {e}", exc_info=False)
             rejected_signals.append({
@@ -210,6 +209,7 @@ async def _load_candles_extended(symbol: str) -> tuple:
     from data_providers import fetch_candles
     from config import config
     import asyncio
+
     candles_1h, candles_4h = await asyncio.gather(
         fetch_candles(symbol, config.TIMEFRAME_SHORT, 300),
         fetch_candles(symbol, config.TIMEFRAME_LONG, 300)
@@ -283,6 +283,7 @@ async def _analyze_sr_with_full_history(candles, current_price) -> Dict:
     try:
         sr_analysis = analyze_support_resistance(candles, current_price, 'UNKNOWN')
         history = []
+
         for lookback in [50, 100, 150]:
             if len(candles.closes) >= lookback:
                 levels = find_support_resistance_levels(candles, lookback=lookback)
@@ -304,6 +305,7 @@ async def _analyze_waves_with_full_history(candles) -> Dict:
     try:
         wave_analysis = analyze_waves_atr(candles, num_waves=5)
         history = []
+
         for num_waves in [3, 5, 7, 10]:
             wave_hist = analyze_waves_atr(candles, num_waves=num_waves)
             if wave_hist:
@@ -343,6 +345,7 @@ async def _analyze_correlation_with_history(symbol, candles_1h, candles_4h, btc_
     try:
         corr_current = get_comprehensive_correlation_analysis(symbol, candles_1h, btc_1h, 'UNKNOWN')
         history = []
+
         for window in [12, 24, 48]:
             if len(candles_1h.closes) >= window and len(btc_1h.closes) >= window:
                 corr = calculate_correlation(candles_1h.closes, btc_1h.closes, window=window)
@@ -361,6 +364,7 @@ async def _calculate_vp_with_history(candles, current_price) -> Dict:
         vp_current = calculate_volume_profile(candles, num_bins=50)
         vp_analysis = analyze_volume_profile(vp_current, current_price) if vp_current else None
         history = []
+
         for lookback in [50, 100, 150]:
             if len(candles.closes) >= lookback:
                 temp_candles = NormalizedCandles(
@@ -432,7 +436,7 @@ async def _analyze_smc_with_history(candles_1h, candles_4h, current_price) -> Di
                 symbol=candles_1h.symbol,
                 interval=candles_1h.interval
             )
-            sweep_hist = analyze_liquidity_sweep(temp_candles, 'UNKNOWN', lookback=lookback)
+            sweep_hist = analyze_liquidity_sweep(temp_candles, 'UNKNOWN')
             if sweep_hist:
                 sweep_history.append({
                     'lookback': lookback,
@@ -463,10 +467,13 @@ def _calculate_rr_ratio(analysis_result: Dict) -> float:
     entry = analysis_result.get('entry_price', 0)
     stop = analysis_result.get('stop_loss', 0)
     tp_levels = analysis_result.get('take_profit_levels', [0, 0, 0])
+
     if entry == 0 or stop == 0 or not tp_levels:
         return 0.0
+
     risk = abs(entry - stop)
     reward = abs(tp_levels[1] - entry) if len(tp_levels) > 1 else abs(tp_levels[0] - entry)
+
     if risk > 0:
         return round(reward / risk, 2)
     return 0.0
@@ -521,19 +528,15 @@ async def analyze_single_pair(symbol: str, direction: str) -> Optional[TradingSi
 
         # Собираем все данные с историей
         logger.debug(f"{symbol} - Analyzing with FULL HISTORY")
-
         sr_data_full = await _analyze_sr_with_full_history(candles_4h, current_price)
         wave_data_full = await _analyze_waves_with_full_history(candles_4h)
         ema200_data_full = await _analyze_ema200_with_full_history(candles_4h)
-
         session = await get_session()
         market_data = await get_market_snapshot(symbol, session)
         market_data_history = await _get_market_data_history(symbol, session)
-
         correlation_data_full = await _analyze_correlation_with_history(
             symbol, candles_1h, candles_4h, btc_candles_1h, btc_candles_4h
         )
-
         vp_data_full = await _calculate_vp_with_history(candles_4h, current_price)
         smc_data_full = await _analyze_smc_with_history(candles_1h, candles_4h, current_price)
 
