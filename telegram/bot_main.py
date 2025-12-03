@@ -1,16 +1,16 @@
 """
-Telegram Bot Main - WITH SIGNAL STORAGE + BACKTESTING
+Telegram Bot Main - FIXED HTML ESCAPING
 Файл: telegram/bot_main.py
 
-ДОБАВЛЕНО:
-- Автоматическое сохранение сигналов
-- Кнопка "📊 Backtest" для запуска backtest
-- Статистика из logs/bot_statistics.json
+ИСПРАВЛЕНО:
+✅ Экранирование HTML символов в rejection_reason для Telegram
+✅ Удалены проблемные символы < > & которые ломают HTML parsing
 """
 
 import asyncio
 import json
 import logging
+import html
 from datetime import datetime
 from typing import Optional
 from pathlib import Path
@@ -63,12 +63,12 @@ class TradingBotTelegram:
         self.trading_bot_running = False
         self._typing_task = None
 
-        # ✅ Signal Storage & Backtester
+        # Signal Storage & Backtester
         from utils import get_signal_storage, get_backtester
         self.signal_storage = get_signal_storage()
         self.backtester = get_backtester()
 
-        # ✅ Statistics file
+        # Statistics file
         from config import config
         self.stats_file = config.LOGS_DIR / 'bot_statistics.json'
 
@@ -156,7 +156,7 @@ class TradingBotTelegram:
         )
 
     # ========================================================================
-    # РУЧНОЙ АНАЛИЗ ПАРЫ (без изменений)
+    # РУЧНОЙ АНАЛИЗ ПАРЫ
     # ========================================================================
 
     async def handle_manual_pair_analysis(self, message: Message, state: FSMContext):
@@ -278,7 +278,7 @@ class TradingBotTelegram:
                 await self._stop_typing_indicator()
 
             if result and result.signal != 'NO_SIGNAL':
-                # ✅ СОХРАНЯЕМ СИГНАЛ
+                # Сохраняем сигнал
                 self.signal_storage.save_signal(result)
 
                 # Отправляем в группу
@@ -300,6 +300,9 @@ class TradingBotTelegram:
                     'rejection_reason',
                     'Сигнал не найден'
                 ) if result else 'Ошибка анализа'
+
+                # ✅ ИСПРАВЛЕНО: Экранируем HTML
+                rejection_reason = self._escape_html(rejection_reason)
 
                 await self.bot.send_message(
                     chat_id=self.user_id,
@@ -401,7 +404,7 @@ class TradingBotTelegram:
             finally:
                 await self._stop_typing_indicator()
 
-            # ✅ СОХРАНЯЕМ СИГНАЛЫ
+            # Сохраняем сигналы
             if approved_signals:
                 saved = self.signal_storage.save_signals_batch(approved_signals)
                 logger.info(f"Saved {saved} signals to storage")
@@ -433,7 +436,7 @@ class TradingBotTelegram:
             if rejected_signals:
                 await self._send_rejected_signals(rejected_signals)
 
-            # ✅ ОБНОВЛЯЕМ СТАТИСТИКУ
+            # Обновляем статистику
             self._update_statistics(len(approved_signals), len(rejected_signals))
 
         except Exception as e:
@@ -592,8 +595,23 @@ class TradingBotTelegram:
         )
 
     # ========================================================================
-    # HELPER FUNCTIONS (без изменений)
+    # HELPER FUNCTIONS
     # ========================================================================
+
+    def _escape_html(self, text: str) -> str:
+        """
+        ✅ НОВОЕ: Экранировать HTML символы для безопасной отправки в Telegram
+
+        Заменяет проблемные символы:
+        - < на &lt;
+        - > на &gt;
+        - & на &amp;
+        """
+        if not text:
+            return ""
+
+        # Используем стандартный html.escape
+        return html.escape(str(text), quote=False)
 
     async def _send_signals_to_group(self, signals: list):
         """Отправить сигналы в группу"""
@@ -617,7 +635,9 @@ class TradingBotTelegram:
             logger.error(f"Error sending signals to group: {e}")
 
     async def _send_rejected_signals(self, rejected_signals: list):
-        """Отправить rejected signals в личку"""
+        """
+        ✅ ИСПРАВЛЕНО: Отправить rejected signals с экранированием HTML
+        """
         if not rejected_signals:
             return
 
@@ -636,6 +656,10 @@ class TradingBotTelegram:
                     symbol = sig.get('symbol', 'UNKNOWN')
                     reason = sig.get('rejection_reason', 'Unknown reason')
 
+                    # ✅ КРИТИЧНО: Экранируем HTML символы
+                    reason = self._escape_html(reason)
+
+                    # Обрезаем если слишком длинный
                     if len(reason) > 200:
                         reason = reason[:197] + "..."
 
