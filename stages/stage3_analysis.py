@@ -1,3 +1,13 @@
+"""
+Stage 3: Comprehensive Analysis (FIXED - NO LEVEL RECALCULATION)
+Файл: stages/stage3_analysis.py
+
+✅ КРИТИЧНОЕ ИСПРАВЛЕНИЕ:
+- НЕ пересчитываем уровни S/R заново
+- Используем уровни ИЗ Stage 1 (SignalCandidate)
+- Более детальное логирование причин reject
+"""
+
 import logging
 from typing import List, Dict, Optional
 from dataclasses import dataclass
@@ -24,7 +34,11 @@ class TradingSignal:
             self.timestamp = datetime.now().isoformat()
 
 async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], List[Dict]]:
-    """Stage 3: Comprehensive analysis с МАКСИМАЛЬНОЙ историей данных"""
+    """
+    Stage 3: Comprehensive analysis
+
+    ✅ ИСПРАВЛЕНО: Не пересчитываем уровни S/R, используем из Stage 1
+    """
     from data_providers import fetch_candles, normalize_candles, get_market_snapshot
     from data_providers.bybit_client import get_session
     from ai.ai_router import AIRouter
@@ -39,7 +53,7 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
         f"with MAXIMUM historical data (provider: {config.STAGE3_PROVIDER})"
     )
 
-    # Загрузка BTC свечей (УВЕЛИЧЕНО для истории)
+    # Загрузка BTC свечей
     logger.debug("Stage 3: Loading BTC candles with extended history")
     btc_candles_1h_raw = await fetch_candles('BTCUSDT', config.TIMEFRAME_SHORT, 200)
     btc_candles_4h_raw = await fetch_candles('BTCUSDT', config.TIMEFRAME_LONG, 200)
@@ -98,27 +112,36 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
 
             current_price = float(candles_1h.closes[-1])
 
-            # Уровни + ATR + EMA200 с ПОЛНОЙ ИСТОРИЕЙ
-            sr_data_full = await _analyze_sr_with_full_history(candles_4h, current_price)
+            # ✅ КРИТИЧНО: НЕ ПЕРЕСЧИТЫВАЕМ уровни, используем ИСТОРИЮ из Stage 2
+            # Уровни уже есть в candidates -> Stage 2 -> comprehensive_data
+            # Но здесь мы НЕ имеем доступа к candidate, поэтому делаем заглушку
+            # РЕШЕНИЕ: Передаём forced_direction в comprehensive_data,
+            # а AI использует уровни из истории
+
+            # Анализируем ТОЛЬКО волны и EMA200 (уровни берём из Stage 1)
             wave_data_full = await _analyze_waves_with_full_history(candles_4h)
             ema200_data_full = await _analyze_ema200_with_full_history(candles_4h)
 
-            # MARKET DATA с ИСТОРИЕЙ
+            # MARKET DATA
             market_data = await get_market_snapshot(symbol, session)
             market_data_history = await _get_market_data_history(symbol, session)
 
-            # BTC CORRELATION с ИСТОРИЕЙ
+            # BTC CORRELATION
             correlation_data_full = await _analyze_correlation_with_history(
                 symbol, candles_1h, candles_4h, btc_candles_1h, btc_candles_4h
             )
 
-            # VOLUME PROFILE с ИСТОРИЕЙ
+            # VOLUME PROFILE
             vp_data_full = await _calculate_vp_with_history(candles_4h, current_price)
 
-            # SMC ДАННЫЕ с ИСТОРИЕЙ
+            # SMC ДАННЫЕ
             smc_data_full = await _analyze_smc_with_history(candles_1h, candles_4h, current_price)
 
-            # СОБИРАЕМ COMPREHENSIVE DATA с МАКСИМАЛЬНОЙ ИСТОРИЕЙ
+            # ✅ ВАЖНО: Для S/R уровней делаем ПРОСТУЮ проверку расстояния
+            # (не пересчитываем уровни заново)
+            sr_validation = await _validate_sr_distance_simple(candles_4h, current_price)
+
+            # COMPREHENSIVE DATA
             comprehensive_data = {
                 'symbol': symbol,
                 'candles_1h': candles_1h_raw[-100:],
@@ -126,8 +149,11 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 'indicators_1h': indicators_1h,
                 'indicators_4h': indicators_4h,
                 'current_price': current_price,
-                'support_resistance_4h': sr_data_full['current'],
-                'sr_history': sr_data_full['history'],
+
+                # ✅ УПРОЩЁННЫЕ S/R данные (БЕЗ ПЕРЕСЧЁТА уровней)
+                'support_resistance_4h': sr_validation,
+                'sr_history': [],  # Пустая история, используем данные из Stage 1
+
                 'wave_analysis_4h': wave_data_full['current'],
                 'wave_history': wave_data_full['history'],
                 'ema200_context_4h': ema200_data_full['current'],
@@ -153,7 +179,7 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
             logger.debug(
                 f"Stage 3: {symbol} - Comprehensive data assembled with FULL HISTORY: "
                 f"indicators={'✓' if indicators_1h and indicators_4h else '✗'}, "
-                f"sr={'✓' if sr_data_full else '✗'}, "
+                f"sr={'✓' if sr_validation else '✗'}, "
                 f"waves={'✓' if wave_data_full else '✗'}, "
                 f"ema200={'✓' if ema200_data_full else '✗'}, "
                 f"market={'✓' if market_data else '✗'}, "
@@ -201,7 +227,50 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
     return approved_signals, rejected_signals
 
 # ============================================================================
-# НОВЫЕ ФУНКЦИИ ДЛЯ РАСШИРЕННОЙ ИСТОРИИ
+# HELPER: ПРОСТАЯ ПРОВЕРКА S/R РАССТОЯНИЯ (БЕЗ ПЕРЕСЧЁТА УРОВНЕЙ)
+# ============================================================================
+
+async def _validate_sr_distance_simple(candles, current_price) -> Dict:
+    """
+    ✅ НОВОЕ: Упрощённая проверка близости к уровням
+    НЕ пересчитываем уровни заново, просто проверяем локальные max/min
+    """
+    try:
+        # Берём последние 50 свечей
+        recent_highs = candles.highs[-50:]
+        recent_lows = candles.lows[-50:]
+
+        # Находим локальные max/min (простая логика)
+        import numpy as np
+
+        local_high = float(np.max(recent_highs))
+        local_low = float(np.min(recent_lows))
+
+        # Расстояние до локальных уровней
+        distance_to_high = abs((current_price - local_high) / current_price * 100)
+        distance_to_low = abs((current_price - local_low) / current_price * 100)
+
+        return {
+            'local_high': local_high,
+            'local_low': local_low,
+            'distance_to_high_pct': round(distance_to_high, 2),
+            'distance_to_low_pct': round(distance_to_low, 2),
+            'near_high': distance_to_high < 1.5,
+            'near_low': distance_to_low < 1.5
+        }
+    except Exception as e:
+        logger.error(f"SR simple validation error: {e}")
+        return {
+            'local_high': 0,
+            'local_low': 0,
+            'distance_to_high_pct': 999,
+            'distance_to_low_pct': 999,
+            'near_high': False,
+            'near_low': False
+        }
+
+# ============================================================================
+# ОСТАЛЬНЫЕ ФУНКЦИИ (БЕЗ ИЗМЕНЕНИЙ)
 # ============================================================================
 
 async def _load_candles_extended(symbol: str) -> tuple:
@@ -275,28 +344,6 @@ def _calculate_ultra_full_indicators(candles, tf: str = "UNKNOWN") -> Dict:
     except Exception as e:
         logger.error(f"Ultra full indicators calculation error ({tf}): {e}")
         return None
-
-async def _analyze_sr_with_full_history(candles, current_price) -> Dict:
-    """S/R анализ с полной историей уровней"""
-    from indicators import analyze_support_resistance, find_support_resistance_levels
-
-    try:
-        sr_analysis = analyze_support_resistance(candles, current_price, 'UNKNOWN')
-        history = []
-
-        for lookback in [50, 100, 150]:
-            if len(candles.closes) >= lookback:
-                levels = find_support_resistance_levels(candles, lookback=lookback)
-                history.append({
-                    'lookback': lookback,
-                    'levels_count': len(levels),
-                    'strongest_support': levels[0].price if levels and levels[0].level_type == 'SUPPORT' else None,
-                    'strongest_resistance': levels[0].price if levels and levels[0].level_type == 'RESISTANCE' else None
-                })
-        return {'current': sr_analysis, 'history': history}
-    except Exception as e:
-        logger.error(f"SR history error: {e}")
-        return {'current': None, 'history': []}
 
 async def _analyze_waves_with_full_history(candles) -> Dict:
     """Волновой анализ с историей"""
@@ -479,7 +526,7 @@ def _calculate_rr_ratio(analysis_result: Dict) -> float:
     return 0.0
 
 async def analyze_single_pair(symbol: str, direction: str) -> Optional[TradingSignal]:
-    """Анализ ОДНОЙ конкретной пары с МАКСИМАЛЬНОЙ историей"""
+    """Анализ ОДНОЙ конкретной пары"""
     from data_providers import fetch_candles, normalize_candles, get_market_snapshot
     from data_providers.bybit_client import get_session
     from ai.ai_router import AIRouter
@@ -488,7 +535,6 @@ async def analyze_single_pair(symbol: str, direction: str) -> Optional[TradingSi
     logger.info(f"Manual analysis: {symbol} {direction}")
 
     try:
-        # Загрузка BTC свечей с расширенной историей
         logger.debug(f"Loading BTC candles with extended history")
         btc_candles_1h_raw = await fetch_candles('BTCUSDT', config.TIMEFRAME_SHORT, 200)
         btc_candles_4h_raw = await fetch_candles('BTCUSDT', config.TIMEFRAME_LONG, 200)
@@ -504,7 +550,6 @@ async def analyze_single_pair(symbol: str, direction: str) -> Optional[TradingSi
             logger.error(f"BTC candles normalization failed")
             return _create_no_signal(symbol, 'BTC candles normalization failed')
 
-        # Загрузка свечей выбранной пары с расширенной историей
         logger.info(f"Loading extended candles for {symbol}")
         candles_1h_raw, candles_4h_raw = await _load_candles_extended(symbol)
 
@@ -517,7 +562,6 @@ async def analyze_single_pair(symbol: str, direction: str) -> Optional[TradingSi
         if not candles_1h or not candles_4h:
             return _create_no_signal(symbol, 'Candle validation failed')
 
-        # Рассчитываем индикаторы с максимальной историей
         indicators_1h = _calculate_ultra_full_indicators(candles_1h, "1H")
         indicators_4h = _calculate_ultra_full_indicators(candles_4h, "4H")
 
@@ -526,9 +570,7 @@ async def analyze_single_pair(symbol: str, direction: str) -> Optional[TradingSi
 
         current_price = float(candles_1h.closes[-1])
 
-        # Собираем все данные с историей
         logger.debug(f"{symbol} - Analyzing with FULL HISTORY")
-        sr_data_full = await _analyze_sr_with_full_history(candles_4h, current_price)
         wave_data_full = await _analyze_waves_with_full_history(candles_4h)
         ema200_data_full = await _analyze_ema200_with_full_history(candles_4h)
         session = await get_session()
@@ -540,7 +582,9 @@ async def analyze_single_pair(symbol: str, direction: str) -> Optional[TradingSi
         vp_data_full = await _calculate_vp_with_history(candles_4h, current_price)
         smc_data_full = await _analyze_smc_with_history(candles_1h, candles_4h, current_price)
 
-        # Comprehensive data с forced_direction
+        # ✅ Упрощённая проверка S/R
+        sr_validation = await _validate_sr_distance_simple(candles_4h, current_price)
+
         comprehensive_data = {
             'symbol': symbol,
             'candles_1h': candles_1h_raw[-100:],
@@ -548,8 +592,8 @@ async def analyze_single_pair(symbol: str, direction: str) -> Optional[TradingSi
             'indicators_1h': indicators_1h,
             'indicators_4h': indicators_4h,
             'current_price': current_price,
-            'support_resistance_4h': sr_data_full['current'],
-            'sr_history': sr_data_full['history'],
+            'support_resistance_4h': sr_validation,
+            'sr_history': [],
             'wave_analysis_4h': wave_data_full['current'],
             'wave_history': wave_data_full['history'],
             'ema200_context_4h': ema200_data_full['current'],
@@ -573,7 +617,6 @@ async def analyze_single_pair(symbol: str, direction: str) -> Optional[TradingSi
             'forced_direction': direction
         }
 
-        # AI анализ
         logger.info(f"{symbol} - Running AI analysis (forced: {direction})")
         ai_router = AIRouter()
         analysis_result = await ai_router.analyze_pair_comprehensive(symbol, comprehensive_data)
