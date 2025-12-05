@@ -2,15 +2,14 @@
 Trading Bot Configuration — Triple EMA Strategy
 Файл: config.py
 
-ОБНОВЛЕНО:
-- Добавлены пути для logs/ и signals/
-- Автоматическое создание директорий
-- Увеличены исторические данные для Stage 3
+✅ ОБНОВЛЕНО:
+- Добавлена поддержка нескольких пользователей через TELEGRAM_USER_IDS
+- Обратная совместимость с TELEGRAM_USER_ID
 """
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 
 def load_env():
@@ -55,6 +54,23 @@ def safe_bool(value: str) -> bool:
     return False
 
 
+def parse_user_ids(ids_str: str) -> List[int]:
+    """
+    Парсинг списка user IDs из строки через запятую
+
+    Args:
+        ids_str: Строка вида "123456,789012,345678"
+
+    Returns:
+        Список int ID (без нулевых)
+    """
+    try:
+        ids = [int(id.strip()) for id in ids_str.split(',') if id.strip()]
+        return [id for id in ids if id != 0]
+    except Exception:
+        return []
+
+
 # Загружаем .env при импорте модуля
 load_env()
 
@@ -78,7 +94,16 @@ DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
 ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
 
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-TELEGRAM_USER_ID = safe_int(os.getenv('TELEGRAM_USER_ID', '0'), 0)
+
+# ✅ НОВОЕ: Поддержка нескольких пользователей
+TELEGRAM_USER_IDS_STR = os.getenv('TELEGRAM_USER_IDS', os.getenv('TELEGRAM_USER_ID', '0'))
+
+# Парсим список ID
+TELEGRAM_USER_IDS = parse_user_ids(TELEGRAM_USER_IDS_STR)
+
+# Для обратной совместимости (первый ID как primary)
+TELEGRAM_USER_ID = TELEGRAM_USER_IDS[0] if TELEGRAM_USER_IDS else 0
+
 TELEGRAM_GROUP_ID = safe_int(os.getenv('TELEGRAM_GROUP_ID', '0'), 0)
 
 # ============================================================================
@@ -143,20 +168,19 @@ STAGE2_CANDLES_1H = 60
 STAGE2_CANDLES_4H = 60
 
 # ============================================================================
-# STAGE 3: AI COMPREHENSIVE ANALYSIS (ОБНОВЛЕНО)
+# STAGE 3: AI COMPREHENSIVE ANALYSIS
 # ============================================================================
 STAGE3_PROVIDER = os.getenv('STAGE3_PROVIDER', 'deepseek')
 STAGE3_MODEL = os.getenv('STAGE3_MODEL', 'deepseek-chat')
 STAGE3_TEMPERATURE = safe_float(os.getenv('STAGE3_TEMPERATURE', '0.7'), 0.7)
 
-# ⬆ Увеличено с 5000 до 8000
 STAGE3_MAX_TOKENS = safe_int(os.getenv('STAGE3_MAX_TOKENS', '8000'), 8000)
 
-# ⬆ Исторические данные увеличены
+# Исторические данные увеличены
 STAGE3_CANDLES_1H = 200
 STAGE3_CANDLES_4H = 100
 
-# ⬆ История индикаторов увеличена
+# История индикаторов увеличена
 AI_INDICATORS_HISTORY = 50
 FINAL_INDICATORS_HISTORY = 50
 
@@ -228,7 +252,10 @@ class Config:
     DEEPSEEK_API_KEY = DEEPSEEK_API_KEY
     ANTHROPIC_API_KEY = ANTHROPIC_API_KEY
     TELEGRAM_BOT_TOKEN = TELEGRAM_BOT_TOKEN
-    TELEGRAM_USER_ID = TELEGRAM_USER_ID
+
+    # ✅ НОВОЕ: Multi-user support
+    TELEGRAM_USER_IDS = TELEGRAM_USER_IDS
+    TELEGRAM_USER_ID = TELEGRAM_USER_ID  # Обратная совместимость
     TELEGRAM_GROUP_ID = TELEGRAM_GROUP_ID
 
     TIMEFRAME_SHORT = TIMEFRAME_SHORT
@@ -268,7 +295,6 @@ class Config:
     STAGE2_CANDLES_1H = STAGE2_CANDLES_1H
     STAGE2_CANDLES_4H = STAGE2_CANDLES_4H
 
-    # Updated Stage 3
     STAGE3_PROVIDER = STAGE3_PROVIDER
     STAGE3_MODEL = STAGE3_MODEL
     STAGE3_TEMPERATURE = STAGE3_TEMPERATURE
@@ -319,8 +345,9 @@ def validate_config():
     if not TELEGRAM_BOT_TOKEN:
         errors.append("TELEGRAM_BOT_TOKEN not set in .env")
 
-    if TELEGRAM_USER_ID == 0:
-        errors.append("TELEGRAM_USER_ID not set in .env")
+    # ✅ ИЗМЕНЕНО: Проверяем список пользователей
+    if not TELEGRAM_USER_IDS:
+        errors.append("TELEGRAM_USER_IDS not set in .env (or TELEGRAM_USER_ID for single user)")
 
     if TELEGRAM_GROUP_ID == 0:
         errors.append("TELEGRAM_GROUP_ID not set in .env")

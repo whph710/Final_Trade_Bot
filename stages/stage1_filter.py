@@ -1,12 +1,11 @@
 """
-Stage 1: Signal Filtering - LEVELS + ATR Strategy
+Stage 1: Signal Filtering - LEVELS + ATR Strategy (FIXED DISTANCE CHECK)
 Файл: stages/stage1_filter.py
 
-✅ НОВАЯ СТРАТЕГИЯ:
-- Уровни поддержки/сопротивления (метод "3 удара")
-- ATR для расчёта волн
-- EMA200 для контекста тренда
-- Объёмы как ключевой фильтр
+✅ ИСПРАВЛЕНО:
+- Более строгий фильтр расстояния до уровня (< 1.5% вместо < 2%)
+- Проверка наличия уровня ДО scoring
+- Детальное логирование причин reject
 """
 
 import logging
@@ -38,13 +37,7 @@ async def run_stage1(
     """
     Stage 1: Фильтрация пар по стратегии Уровни + ATR
 
-    Args:
-        pairs: Список торговых пар
-        min_confidence: Минимальный confidence (default 60)
-        min_volume_ratio: Минимальный volume ratio (default 1.0)
-
-    Returns:
-        Список SignalCandidate с confidence >= min_confidence
+    ✅ ИСПРАВЛЕНО: Строгий фильтр расстояния до уровня
     """
     from data_providers import fetch_multiple_candles, normalize_candles
     from indicators import (
@@ -83,6 +76,7 @@ async def run_stage1(
     stats = {
         'invalid': 0,
         'no_levels': 0,
+        'level_too_far': 0,  # ✅ НОВАЯ КАТЕГОРИЯ
         'low_confidence': 0,
         'low_volume': 0,
         'rsi_extreme': 0,
@@ -107,15 +101,46 @@ async def run_stage1(
             current_price = float(candles.closes[-1])
 
             # ============================================================
-            # SUPPORT/RESISTANCE LEVELS
+            # SUPPORT/RESISTANCE LEVELS (оптимизированные параметры)
             # ============================================================
             sr_analysis = analyze_support_resistance(
-                candles, current_price, signal_direction='UNKNOWN'
+                candles,
+                current_price,
+                signal_direction='UNKNOWN'
             )
 
             if not sr_analysis or len(sr_analysis.all_levels) == 0:
                 stats['no_levels'] += 1
                 logger.debug(f"Stage 1: {symbol} - No S/R levels found")
+                continue
+
+            # ✅ КРИТИЧНО: Проверяем расстояние до ближайшего уровня ДО дальнейшего анализа
+            nearest_support = sr_analysis.nearest_support
+            nearest_resistance = sr_analysis.nearest_resistance
+
+            # Проверка для LONG: есть ли поддержка рядом
+            long_level_ok = (
+                nearest_support is not None and
+                nearest_support.distance_from_current_pct <= 1.5  # ✅ Строже: было 2.0, стало 1.5
+            )
+
+            # Проверка для SHORT: есть ли сопротивление рядом
+            short_level_ok = (
+                nearest_resistance is not None and
+                nearest_resistance.distance_from_current_pct <= 1.5  # ✅ Строже: было 2.0, стало 1.5
+            )
+
+            # Если НИ ТО НИ ТО - пропускаем
+            if not long_level_ok and not short_level_ok:
+                stats['level_too_far'] += 1
+
+                long_dist = nearest_support.distance_from_current_pct if nearest_support else 999
+                short_dist = nearest_resistance.distance_from_current_pct if nearest_resistance else 999
+
+                logger.debug(
+                    f"Stage 1: {symbol} - Levels too far "
+                    f"(support: {long_dist:.2f}%, resistance: {short_dist:.2f}%)"
+                )
                 continue
 
             # ============================================================
@@ -154,12 +179,15 @@ async def run_stage1(
             # ============================================================
             direction, confidence, pattern_type, rejection_reason = _determine_level_signal(
                 sr_analysis, wave_analysis, ema200_context,
-                current_rsi, volume_analysis
+                current_rsi, volume_analysis,
+                long_level_ok, short_level_ok  # ✅ Передаём флаги уровней
             )
 
             if direction == 'NONE':
                 if 'overextension' in rejection_reason.lower():
                     stats['overextension'] += 1
+                elif 'too far' in rejection_reason.lower():
+                    stats['level_too_far'] += 1
                 else:
                     stats['no_levels'] += 1
 
@@ -187,7 +215,21 @@ async def run_stage1(
             )
 
             candidates.append(candidate)
-            logger.info(f"Stage 1: ✓ {symbol} {direction} (confidence: {confidence}%, pattern: {pattern_type})")
+
+            # Детальное логирование для отладки
+            level_dist = (
+                sr_analysis.nearest_support.distance_from_current_pct
+                if direction == 'LONG' and sr_analysis.nearest_support
+                else sr_analysis.nearest_resistance.distance_from_current_pct
+                if direction == 'SHORT' and sr_analysis.nearest_resistance
+                else 0
+            )
+
+            logger.info(
+                f"Stage 1: ✓ {symbol} {direction} "
+                f"(confidence: {confidence}%, pattern: {pattern_type}, "
+                f"level_distance: {level_dist:.2f}%)"
+            )
 
         except Exception as e:
             logger.debug(f"Stage 1: Error processing {symbol}: {e}")
@@ -208,6 +250,7 @@ async def run_stage1(
     logger.info(f"❌ Skipped breakdown:")
     logger.info(f"   • Invalid data: {stats['invalid']}")
     logger.info(f"   • No S/R levels: {stats['no_levels']}")
+    logger.info(f"   • Level too far (> 1.5%): {stats['level_too_far']}")  # ✅ НОВОЕ
     logger.info(f"   • Low confidence: {stats['low_confidence']}")
     logger.info(f"   • Low volume: {stats['low_volume']}")
     logger.info(f"   • RSI extreme: {stats['rsi_extreme']}")
@@ -224,7 +267,17 @@ async def run_stage1(
 
         logger.info(f"\nTop 10 candidates:")
         for i, c in enumerate(candidates[:10], 1):
-            logger.info(f"  {i}. {c.symbol} {c.direction} (conf: {c.confidence}%, {c.pattern_type})")
+            level_dist = (
+                c.sr_analysis.nearest_support.distance_from_current_pct
+                if c.direction == 'LONG' and c.sr_analysis.nearest_support
+                else c.sr_analysis.nearest_resistance.distance_from_current_pct
+                if c.direction == 'SHORT' and c.sr_analysis.nearest_resistance
+                else 0
+            )
+            logger.info(
+                f"  {i}. {c.symbol} {c.direction} "
+                f"(conf: {c.confidence}%, {c.pattern_type}, dist: {level_dist:.2f}%)"
+            )
 
     logger.info("=" * 70)
 
@@ -236,35 +289,14 @@ def _determine_level_signal(
         wave_analysis: 'WaveAnalysis',
         ema200_context: dict,
         rsi: float,
-        volume_analysis: 'VolumeAnalysis'
+        volume_analysis: 'VolumeAnalysis',
+        long_level_ok: bool,  # ✅ НОВЫЙ ПАРАМЕТР
+        short_level_ok: bool  # ✅ НОВЫЙ ПАРАМЕТР
 ) -> tuple[str, int, str, str]:
     """
     Определить сигнал на основе уровней + ATR
 
-    БЫЧИЙ СИГНАЛ (LONG):
-    ✅ Цена около уровня SUPPORT (< 1%)
-    ✅ Уровень сильный (3+ касания)
-    ✅ Объём растёт
-    ✅ ATR: ранний вход (< 30% от средней волны)
-    ✅ EMA200: цена выше EMA200 (бычий тренд)
-    ✅ RSI: 40-70
-
-    МЕДВЕЖИЙ СИГНАЛ (SHORT):
-    ✅ Цена около уровня RESISTANCE (< 1%)
-    ✅ Уровень сильный (3+ касания)
-    ✅ Объём растёт
-    ✅ ATR: ранний вход
-    ✅ EMA200: цена ниже EMA200 (медвежий тренд)
-    ✅ RSI: 30-60
-
-    SCORING:
-    - Качество уровня (3+ касания): 35 баллов
-    - Расстояние до уровня (< 1%): 25 баллов
-    - ATR ранний вход: 20 баллов
-    - EMA200 alignment: 10 баллов
-    - Объём > 1.5x: 10 баллов
-
-    MIN_SCORE = 60 баллов
+    ✅ ИСПРАВЛЕНО: Учитываем флаги long_level_ok/short_level_ok
     """
 
     MIN_SCORE = 60
@@ -275,9 +307,9 @@ def _determine_level_signal(
     bullish_score = 0
     bullish_details = []
 
-    nearest_support = sr_analysis.nearest_support
+    if long_level_ok:  # ✅ Проверяем флаг ПЕРЕД скорингом
+        nearest_support = sr_analysis.nearest_support
 
-    if nearest_support:
         # Качество уровня
         if nearest_support.touches >= 5:
             bullish_score += 40
@@ -289,7 +321,7 @@ def _determine_level_signal(
             bullish_score += 25
             bullish_details.append(f"Valid support ({nearest_support.touches} touches)")
 
-        # Расстояние до уровня
+        # Расстояние до уровня (ужесточено)
         distance = nearest_support.distance_from_current_pct
         if distance < 0.5:
             bullish_score += 30
@@ -297,9 +329,9 @@ def _determine_level_signal(
         elif distance < 1.0:
             bullish_score += 25
             bullish_details.append(f"Good entry (<1%)")
-        elif distance < 2.0:
+        elif distance < 1.5:  # ✅ Было 2.0, стало 1.5
             bullish_score += 15
-            bullish_details.append(f"Acceptable entry (<2%)")
+            bullish_details.append(f"Acceptable entry (<1.5%)")
         else:
             bullish_details.append(f"Too far from support ({distance:.1f}%)")
 
@@ -353,9 +385,9 @@ def _determine_level_signal(
     bearish_score = 0
     bearish_details = []
 
-    nearest_resistance = sr_analysis.nearest_resistance
+    if short_level_ok:  # ✅ Проверяем флаг ПЕРЕД скорингом
+        nearest_resistance = sr_analysis.nearest_resistance
 
-    if nearest_resistance:
         # Качество уровня
         if nearest_resistance.touches >= 5:
             bearish_score += 40
@@ -367,7 +399,7 @@ def _determine_level_signal(
             bearish_score += 25
             bearish_details.append(f"Valid resistance ({nearest_resistance.touches} touches)")
 
-        # Расстояние до уровня
+        # Расстояние до уровня (ужесточено)
         distance = nearest_resistance.distance_from_current_pct
         if distance < 0.5:
             bearish_score += 30
@@ -375,9 +407,9 @@ def _determine_level_signal(
         elif distance < 1.0:
             bearish_score += 25
             bearish_details.append(f"Good entry (<1%)")
-        elif distance < 2.0:
+        elif distance < 1.5:  # ✅ Было 2.0, стало 1.5
             bearish_score += 15
-            bearish_details.append(f"Acceptable entry (<2%)")
+            bearish_details.append(f"Acceptable entry (<1.5%)")
         else:
             bearish_details.append(f"Too far from resistance ({distance:.1f}%)")
 

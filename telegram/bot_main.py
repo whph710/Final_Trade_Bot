@@ -1,10 +1,11 @@
 """
-Telegram Bot Main - FIXED HTML ESCAPING
+Telegram Bot Main - Multi-User Support
 Файл: telegram/bot_main.py
 
-ИСПРАВЛЕНО:
-✅ Экранирование HTML символов в rejection_reason для Telegram
-✅ Удалены проблемные символы < > & которые ломают HTML parsing
+✅ ОБНОВЛЕНО:
+- Поддержка нескольких пользователей через список user_ids
+- Метод _is_authorized() для проверки доступа
+- Метод _notify_all_users() для массовых уведомлений
 """
 
 import asyncio
@@ -12,7 +13,7 @@ import json
 import logging
 import html
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -49,7 +50,7 @@ class TradingBotTelegram:
     def __init__(
             self,
             bot_token: str,
-            user_id: int,
+            user_ids: List[int],  # ✅ Теперь список
             group_id: int
     ):
         self.bot = Bot(token=bot_token)
@@ -58,7 +59,9 @@ class TradingBotTelegram:
         self.router = Router()
         self.dp.include_router(self.router)
 
-        self.user_id = user_id
+        # ✅ НОВОЕ: Список разрешенных пользователей
+        self.user_ids = user_ids if isinstance(user_ids, list) else [user_ids]
+        self.primary_user_id = self.user_ids[0] if self.user_ids else 0
         self.group_id = group_id
         self.trading_bot_running = False
         self._typing_task = None
@@ -76,8 +79,13 @@ class TradingBotTelegram:
 
         logger.info(
             f"Trading Bot Telegram initialized: "
-            f"user_id={user_id}, group_id={group_id}"
+            f"user_ids={self.user_ids}, group_id={group_id}"
         )
+
+    # ✅ НОВЫЙ МЕТОД: Проверка доступа
+    def _is_authorized(self, user_id: int) -> bool:
+        """Проверка что пользователь имеет доступ"""
+        return user_id in self.user_ids
 
     def _register_handlers(self):
         """Регистрация обработчиков команд"""
@@ -123,7 +131,8 @@ class TradingBotTelegram:
         """Обработка команды /start"""
         user_id = message.from_user.id
 
-        if user_id != self.user_id:
+        # ✅ ИЗМЕНЕНО: Проверка через список
+        if not self._is_authorized(user_id):
             await message.reply("❌ Доступ запрещён")
             return
 
@@ -163,7 +172,8 @@ class TradingBotTelegram:
         """Начать диалог для ручного анализа пары"""
         user_id = message.from_user.id
 
-        if user_id != self.user_id:
+        # ✅ ИЗМЕНЕНО
+        if not self._is_authorized(user_id):
             return
 
         await state.set_state(ManualAnalysisStates.waiting_for_symbol)
@@ -179,7 +189,8 @@ class TradingBotTelegram:
         """Обработка ввода символа"""
         user_id = message.from_user.id
 
-        if user_id != self.user_id:
+        # ✅ ИЗМЕНЕНО
+        if not self._is_authorized(user_id):
             return
 
         if message.text and message.text.lower() in ['/cancel', 'отмена', 'cancel']:
@@ -232,7 +243,8 @@ class TradingBotTelegram:
         """Обработка выбора направления"""
         user_id = callback.from_user.id
 
-        if user_id != self.user_id:
+        # ✅ ИЗМЕНЕНО
+        if not self._is_authorized(user_id):
             await callback.answer("❌ Доступ запрещён", show_alert=True)
             return
 
@@ -256,13 +268,13 @@ class TradingBotTelegram:
             parse_mode="HTML"
         )
 
-        await self._run_manual_pair_analysis(symbol, action)
+        await self._run_manual_pair_analysis(symbol, action, user_id)
         await state.clear()
 
-    async def _run_manual_pair_analysis(self, symbol: str, direction: str):
+    async def _run_manual_pair_analysis(self, symbol: str, direction: str, user_id: int):
         """Запуск Stage 3 для конкретной пары и направления"""
         try:
-            await self._start_typing_indicator(self.user_id)
+            await self._start_typing_indicator(user_id)
 
             try:
                 from stages.stage3_analysis import analyze_single_pair
@@ -285,7 +297,7 @@ class TradingBotTelegram:
                 await self._send_signals_to_group([result])
 
                 await self.bot.send_message(
-                    chat_id=self.user_id,
+                    chat_id=user_id,
                     text=(
                         f"✅ <b>Анализ завершён</b>\n\n"
                         f"Пара: <b>{symbol}</b>\n"
@@ -301,11 +313,10 @@ class TradingBotTelegram:
                     'Сигнал не найден'
                 ) if result else 'Ошибка анализа'
 
-                # ✅ ИСПРАВЛЕНО: Экранируем HTML
                 rejection_reason = self._escape_html(rejection_reason)
 
                 await self.bot.send_message(
-                    chat_id=self.user_id,
+                    chat_id=user_id,
                     text=(
                         f"⚠️ <b>Сигнал не найден</b>\n\n"
                         f"Пара: <b>{symbol}</b>\n"
@@ -325,7 +336,7 @@ class TradingBotTelegram:
                 pass
 
             await self.bot.send_message(
-                chat_id=self.user_id,
+                chat_id=user_id,
                 text=f"❌ <b>Ошибка анализа:</b> {str(e)[:200]}",
                 parse_mode="HTML"
             )
@@ -336,18 +347,24 @@ class TradingBotTelegram:
 
     async def handle_run_analysis(self, message: Message):
         """Обработчик кнопки '▶️ Запустить сейчас'"""
+        # ✅ ИЗМЕНЕНО: Проверка доступа
+        if not self._is_authorized(message.from_user.id):
+            return
+
         await self.run_trading_bot_manual(message)
 
     async def run_trading_bot_manual(self, message: Message):
         """Ручной запуск торгового бота (полный цикл)"""
+        user_id = message.from_user.id
+
         try:
             await self.bot.send_message(
-                chat_id=self.user_id,
+                chat_id=user_id,
                 text="⏳ <b>Запуск анализа...</b>",
                 parse_mode="HTML"
             )
 
-            await self._start_typing_indicator(self.user_id)
+            await self._start_typing_indicator(user_id)
 
             try:
                 from stages import run_stage1, run_stage2, run_stage3
@@ -360,7 +377,7 @@ class TradingBotTelegram:
 
                 if not candidates:
                     await self.bot.send_message(
-                        chat_id=self.user_id,
+                        chat_id=user_id,
                         text="❌ <b>Stage 1: Сигналов не найдено</b>",
                         parse_mode="HTML"
                     )
@@ -368,7 +385,7 @@ class TradingBotTelegram:
                     return
 
                 await self.bot.send_message(
-                    chat_id=self.user_id,
+                    chat_id=user_id,
                     text=f"✅ <b>Stage 1: Найдено {len(candidates)} сигналов</b>",
                     parse_mode="HTML"
                 )
@@ -379,7 +396,7 @@ class TradingBotTelegram:
 
                 if not selected_pairs:
                     await self.bot.send_message(
-                        chat_id=self.user_id,
+                        chat_id=user_id,
                         text="❌ <b>Stage 2: AI не выбрал пары</b>",
                         parse_mode="HTML"
                     )
@@ -387,7 +404,7 @@ class TradingBotTelegram:
                     return
 
                 await self.bot.send_message(
-                    chat_id=self.user_id,
+                    chat_id=user_id,
                     text=(
                         f"✅ <b>Stage 2: AI выбрал {len(selected_pairs)} пар</b>\n\n"
                         f"{'  •  '.join(selected_pairs)}"
@@ -409,12 +426,12 @@ class TradingBotTelegram:
                 saved = self.signal_storage.save_signals_batch(approved_signals)
                 logger.info(f"Saved {saved} signals to storage")
 
-            # Отправляем результат
+            # ✅ ИЗМЕНЕНО: Уведомляем инициатора (не всех)
             if approved_signals:
                 await self._send_signals_to_group(approved_signals)
 
                 await self.bot.send_message(
-                    chat_id=self.user_id,
+                    chat_id=user_id,
                     text=(
                         f"✅ <b>Анализ завершён</b>\n\n"
                         f"Одобрено: {len(approved_signals)}\n"
@@ -425,7 +442,7 @@ class TradingBotTelegram:
                 )
             else:
                 await self.bot.send_message(
-                    chat_id=self.user_id,
+                    chat_id=user_id,
                     text=(
                         f"⚠️ <b>Сигналов не найдено</b>\n\n"
                         f"Отклонено: {len(rejected_signals)}"
@@ -434,7 +451,7 @@ class TradingBotTelegram:
                 )
 
             if rejected_signals:
-                await self._send_rejected_signals(rejected_signals)
+                await self._send_rejected_signals(rejected_signals, user_id)
 
             # Обновляем статистику
             self._update_statistics(len(approved_signals), len(rejected_signals))
@@ -450,7 +467,7 @@ class TradingBotTelegram:
                 pass
 
             await self.bot.send_message(
-                chat_id=self.user_id,
+                chat_id=user_id,
                 text=f"❌ <b>Ошибка:</b> {str(e)[:200]}",
                 parse_mode="HTML"
             )
@@ -463,13 +480,13 @@ class TradingBotTelegram:
         """Запуск backtesting"""
         user_id = message.from_user.id
 
-        if user_id != self.user_id:
+        # ✅ ИЗМЕНЕНО
+        if not self._is_authorized(user_id):
             return
 
         try:
             await message.answer("⏳ <b>Запуск backtest...</b>", parse_mode="HTML")
 
-            # Загружаем сигналы
             signals = self.signal_storage.load_signals()
 
             if not signals:
@@ -485,10 +502,8 @@ class TradingBotTelegram:
                 parse_mode="HTML"
             )
 
-            # Запускаем backtest
             result = self.backtester.run_backtest(signals)
 
-            # Форматируем отчёт
             from utils import format_backtest_report
             report = format_backtest_report(result)
 
@@ -512,22 +527,30 @@ class TradingBotTelegram:
 
     async def show_status(self, message: Message):
         """Показать статус бота"""
+        # ✅ ИЗМЕНЕНО
+        if not self._is_authorized(message.from_user.id):
+            return
+
         status_text = (
             "📊 <b>Статус бота:</b>\n\n"
             f"⏰ Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"👤 User ID: {self.user_id}\n"
+            f"👤 Пользователей: {len(self.user_ids)}\n"
             f"👥 Group ID: {self.group_id}\n"
             f"🤖 Статус: Активен\n"
         )
 
         await self.bot.send_message(
-            chat_id=self.user_id,
+            chat_id=message.from_user.id,
             text=status_text,
             parse_mode="HTML"
         )
 
     async def show_statistics(self, message: Message):
-        """Показать статистику из logs/bot_statistics.json"""
+        """Показать статистику"""
+        # ✅ ИЗМЕНЕНО
+        if not self._is_authorized(message.from_user.id):
+            return
+
         try:
             if not self.stats_file.exists():
                 await message.answer(
@@ -560,7 +583,7 @@ class TradingBotTelegram:
             )
 
     def _update_statistics(self, approved: int, rejected: int):
-        """Обновить статистику в logs/bot_statistics.json"""
+        """Обновить статистику"""
         try:
             if self.stats_file.exists():
                 with open(self.stats_file, 'r', encoding='utf-8') as f:
@@ -588,8 +611,12 @@ class TradingBotTelegram:
 
     async def stop_bot(self, message: Message):
         """Остановка бота"""
+        # ✅ ИЗМЕНЕНО
+        if not self._is_authorized(message.from_user.id):
+            return
+
         await self.bot.send_message(
-            chat_id=self.user_id,
+            chat_id=message.from_user.id,
             text="🛑 <b>Бот остановлен.</b> Перезапустите для возобновления",
             parse_mode="HTML"
         )
@@ -599,19 +626,23 @@ class TradingBotTelegram:
     # ========================================================================
 
     def _escape_html(self, text: str) -> str:
-        """
-        ✅ НОВОЕ: Экранировать HTML символы для безопасной отправки в Telegram
-
-        Заменяет проблемные символы:
-        - < на &lt;
-        - > на &gt;
-        - & на &amp;
-        """
+        """Экранировать HTML символы"""
         if not text:
             return ""
-
-        # Используем стандартный html.escape
         return html.escape(str(text), quote=False)
+
+    # ✅ НОВОЕ: Отправка уведомлений ВСЕМ пользователям
+    async def _notify_all_users(self, text: str):
+        """Отправить уведомление всем разрешенным пользователям"""
+        for user_id in self.user_ids:
+            try:
+                await self.bot.send_message(
+                    chat_id=user_id,
+                    text=text,
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to notify user {user_id}: {e}")
 
     async def _send_signals_to_group(self, signals: list):
         """Отправить сигналы в группу"""
@@ -634,10 +665,8 @@ class TradingBotTelegram:
         except Exception as e:
             logger.error(f"Error sending signals to group: {e}")
 
-    async def _send_rejected_signals(self, rejected_signals: list):
-        """
-        ✅ ИСПРАВЛЕНО: Отправить rejected signals с экранированием HTML
-        """
+    async def _send_rejected_signals(self, rejected_signals: list, user_id: int):
+        """Отправить rejected signals конкретному пользователю"""
         if not rejected_signals:
             return
 
@@ -656,10 +685,8 @@ class TradingBotTelegram:
                     symbol = sig.get('symbol', 'UNKNOWN')
                     reason = sig.get('rejection_reason', 'Unknown reason')
 
-                    # ✅ КРИТИЧНО: Экранируем HTML символы
                     reason = self._escape_html(reason)
 
-                    # Обрезаем если слишком длинный
                     if len(reason) > 200:
                         reason = reason[:197] + "..."
 
@@ -669,14 +696,14 @@ class TradingBotTelegram:
                 full_message = "\n".join(message_parts)
 
                 await self.bot.send_message(
-                    chat_id=self.user_id,
+                    chat_id=user_id,
                     text=full_message,
                     parse_mode="HTML"
                 )
 
                 await asyncio.sleep(0.5)
 
-            logger.info(f"Sent {len(rejected_signals)} rejected signals to user")
+            logger.info(f"Sent {len(rejected_signals)} rejected signals to user {user_id}")
 
         except Exception as e:
             logger.error(f"Error sending rejected signals: {e}")
@@ -729,13 +756,16 @@ class TradingBotTelegram:
                 logger.debug(f"Cleanup on shutdown: {e}")
 
 
+# ============================================================================
+# RUN FUNCTION
+# ============================================================================
 async def run_telegram_bot():
     """Главная функция для запуска бота"""
     from config import config
 
     bot = TradingBotTelegram(
         bot_token=config.TELEGRAM_BOT_TOKEN,
-        user_id=config.TELEGRAM_USER_ID,
+        user_ids=config.TELEGRAM_USER_IDS,  # ✅ Передаём список
         group_id=config.TELEGRAM_GROUP_ID
     )
 
