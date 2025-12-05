@@ -1,11 +1,11 @@
 """
-Backtesting Module - FIXED SMC SCORING
+Backtesting Module - REALISTIC OUTCOME ESTIMATION
 Файл: utils/backtesting.py
 
 ✅ ИСПРАВЛЕНО:
-- Улучшен парсинг SMC данных с fallback логикой
-- Добавлены проверки на None/отсутствие данных
-- Детерминированная оценка (убрана случайность)
+- Более реалистичная оценка outcome на основе реальных данных
+- Проверка достижимости TP/SL на исторических свечах
+- Fallback на качественный scoring если свечей нет
 """
 
 import json
@@ -84,16 +84,32 @@ class Backtester:
             confidence = signal.get('confidence', 50)
             rr_ratio = signal.get('risk_reward_ratio', 0)
 
-            # ✅ ИСПРАВЛЕНО: Детерминированная оценка с SMC данными
-            outcome, exit_price = self._estimate_outcome_with_smc(
-                signal_type,
-                confidence,
-                rr_ratio,
-                entry,
-                stop,
-                tp_levels,
-                signal.get('comprehensive_data', {})
-            )
+            # ✅ НОВОЕ: Попытка найти исторические свечи
+            comprehensive_data = signal.get('comprehensive_data', {})
+            candles_1h = comprehensive_data.get('candles_1h', [])
+
+            # Если свечей достаточно - используем реальные данные
+            if candles_1h and len(candles_1h) >= 20:
+                outcome, exit_price = self._estimate_outcome_from_candles(
+                    signal_type,
+                    entry,
+                    stop,
+                    tp_levels,
+                    candles_1h
+                )
+                logger.debug(f"{symbol}: Outcome from candles = {outcome}")
+            else:
+                # Fallback: качественная оценка
+                outcome, exit_price = self._estimate_outcome_from_quality(
+                    signal_type,
+                    confidence,
+                    rr_ratio,
+                    entry,
+                    stop,
+                    tp_levels,
+                    comprehensive_data
+                )
+                logger.debug(f"{symbol}: Outcome from quality score = {outcome}")
 
             # Рассчитываем PnL
             if signal_type == 'LONG':
@@ -122,23 +138,117 @@ class Backtester:
                 'pnl_pct': 0
             }
 
-    def _estimate_outcome_with_smc(
-            self,
-            signal_type: str,
-            confidence: int,
-            rr_ratio: float,
-            entry: float,
-            stop: float,
-            tp_levels: List[float],
-            comprehensive_data: Dict
+    def _estimate_outcome_from_candles(
+        self,
+        signal_type: str,
+        entry: float,
+        stop: float,
+        tp_levels: List[float],
+        candles: List
     ) -> tuple[str, float]:
         """
-        ✅ УЛУЧШЕНО: Оценка исхода с SMC данными и fallback логикой
+        ✅ НОВОЕ: Оценка outcome на основе реальных исторических свечей
+
+        Проверяем следующие 10-20 свечей после сигнала:
+        - Был ли достигнут TP1/TP2/TP3?
+        - Был ли достигнут SL?
+        - Что было достигнуто первым?
+        """
+        try:
+            if len(tp_levels) < 3:
+                tp_levels = tp_levels + [0] * (3 - len(tp_levels))
+
+            tp1, tp2, tp3 = tp_levels[0], tp_levels[1], tp_levels[2]
+
+            # Берём первые 20 свечей после входа (примерно 20 часов на 1H)
+            test_candles = candles[:20]
+
+            for candle in test_candles:
+                if not candle or len(candle) < 5:
+                    continue
+
+                try:
+                    high = float(candle[2])
+                    low = float(candle[3])
+                except:
+                    continue
+
+                if signal_type == 'LONG':
+                    # ✅ LONG: проверяем достижение TP (high >= TP) или SL (low <= SL)
+
+                    # Проверяем SL СНАЧАЛА (консервативно)
+                    if low <= stop:
+                        logger.debug(f"LONG: SL hit at {low:.4f} (stop={stop:.4f})")
+                        return 'SL_HIT', stop
+
+                    # Проверяем TP3
+                    if high >= tp3:
+                        logger.debug(f"LONG: TP3 hit at {high:.4f} (tp3={tp3:.4f})")
+                        return 'TP3_HIT', tp3
+
+                    # Проверяем TP2
+                    if high >= tp2:
+                        logger.debug(f"LONG: TP2 hit at {high:.4f} (tp2={tp2:.4f})")
+                        return 'TP2_HIT', tp2
+
+                    # Проверяем TP1
+                    if high >= tp1:
+                        logger.debug(f"LONG: TP1 hit at {high:.4f} (tp1={tp1:.4f})")
+                        return 'TP1_HIT', tp1
+
+                elif signal_type == 'SHORT':
+                    # ✅ SHORT: проверяем достижение TP (low <= TP) или SL (high >= SL)
+
+                    # Проверяем SL СНАЧАЛА (консервативно)
+                    if high >= stop:
+                        logger.debug(f"SHORT: SL hit at {high:.4f} (stop={stop:.4f})")
+                        return 'SL_HIT', stop
+
+                    # Проверяем TP3
+                    if low <= tp3:
+                        logger.debug(f"SHORT: TP3 hit at {low:.4f} (tp3={tp3:.4f})")
+                        return 'TP3_HIT', tp3
+
+                    # Проверяем TP2
+                    if low <= tp2:
+                        logger.debug(f"SHORT: TP2 hit at {low:.4f} (tp2={tp2:.4f})")
+                        return 'TP2_HIT', tp2
+
+                    # Проверяем TP1
+                    if low <= tp1:
+                        logger.debug(f"SHORT: TP1 hit at {low:.4f} (tp1={tp1:.4f})")
+                        return 'TP1_HIT', tp1
+
+            # Если ничего не достигнуто за 20 свечей - считаем что сигнал не отработал
+            logger.debug("No TP/SL hit within 20 candles - assuming SL")
+            return 'SL_HIT', stop
+
+        except Exception as e:
+            logger.error(f"Error in candle-based outcome: {e}")
+            # Fallback на качественную оценку
+            return self._estimate_outcome_from_quality(
+                signal_type, 50, 1.5, entry, stop, tp_levels, {}
+            )
+
+    def _estimate_outcome_from_quality(
+        self,
+        signal_type: str,
+        confidence: int,
+        rr_ratio: float,
+        entry: float,
+        stop: float,
+        tp_levels: List[float],
+        comprehensive_data: Dict
+    ) -> tuple[str, float]:
+        """
+        ✅ FALLBACK: Оценка outcome на основе качественного scoring
+
+        Используется если нет исторических свечей
         """
         quality_score = 0
 
         # 1. Confidence (макс 35 баллов)
-        quality_score += min(35, (confidence - 50) * 0.7)
+        quality_score += min(35, max(0, (confidence - 50) * 0.7))
 
         # 2. R/R ratio (макс 25 баллов)
         if rr_ratio >= 3.0:
@@ -150,62 +260,44 @@ class Backtester:
         elif rr_ratio >= 1.5:
             quality_score += 10
 
-        # ============================================================
-        # 3. ✅ ИСПРАВЛЕНО: SMC ДАННЫЕ с fallback (макс 20 баллов)
-        # ============================================================
-
-        # Order Blocks (макс 10 баллов)
+        # 3. SMC данные (макс 20 баллов)
         ob_score = self._score_order_blocks(comprehensive_data)
-        quality_score += ob_score
-
-        # Imbalances/FVG (макс 5 баллов)
         imb_score = self._score_imbalances(comprehensive_data)
-        quality_score += imb_score
-
-        # Liquidity Sweeps (макс 5 баллов)
         sweep_score = self._score_sweeps(comprehensive_data)
-        quality_score += sweep_score
 
-        # ============================================================
+        quality_score += ob_score + imb_score + sweep_score
+
         # 4. Market Data (макс 10 баллов)
-        # ============================================================
         market_data = comprehensive_data.get('market_data', {})
 
         if isinstance(market_data, dict):
-            # Funding rate
             funding_rate = abs(market_data.get('funding_rate', 0))
             if funding_rate < 0.01:
                 quality_score += 3
 
-            # OI change
             oi_change = market_data.get('oi_change_24h', 0)
             if signal_type == 'LONG' and oi_change > 0:
                 quality_score += 4
             elif signal_type == 'SHORT' and oi_change < 0:
                 quality_score += 4
 
-            # Spread
             spread = market_data.get('spread_pct', 0)
             if spread < 0.10:
                 quality_score += 3
 
-        # ============================================================
         # 5. Indicators (макс 10 баллов)
-        # ============================================================
         indicators = comprehensive_data.get('indicators_4h', {})
 
         if isinstance(indicators, dict):
             current = indicators.get('current', {})
 
             if isinstance(current, dict):
-                # RSI optimal
                 rsi = current.get('rsi', 50)
                 if signal_type == 'LONG' and 40 <= rsi <= 70:
                     quality_score += 5
                 elif signal_type == 'SHORT' and 30 <= rsi <= 60:
                     quality_score += 5
 
-                # Volume
                 volume_ratio = current.get('volume_ratio', 1.0)
                 if volume_ratio > 1.5:
                     quality_score += 5
@@ -214,104 +306,88 @@ class Backtester:
         quality_score = max(0, min(100, quality_score))
 
         logger.debug(
-            f"Backtest quality score: {quality_score:.1f} "
+            f"Quality score: {quality_score:.1f} "
             f"(conf={confidence}, rr={rr_ratio:.2f}, "
             f"OB={ob_score}, FVG={imb_score}, Sweep={sweep_score})"
         )
 
-        # ============================================================
-        # ОПРЕДЕЛЕНИЕ ИСХОДА
-        # ============================================================
+        # ✅ УЛУЧШЕННАЯ ЛОГИКА OUTCOME
+        if len(tp_levels) < 3:
+            tp_levels = tp_levels + [0] * (3 - len(tp_levels))
 
-        if quality_score >= 80:
-            outcome = 'TP3_HIT'
-            exit_price = tp_levels[2] if len(tp_levels) > 2 else tp_levels[0]
+        # Высокое качество → TP3
+        if quality_score >= 85:
+            return 'TP3_HIT', tp_levels[2]
 
-        elif quality_score >= 65:
-            outcome = 'TP2_HIT'
-            exit_price = tp_levels[1] if len(tp_levels) > 1 else tp_levels[0]
+        # Хорошее качество → TP2
+        elif quality_score >= 70:
+            return 'TP2_HIT', tp_levels[1]
 
-        elif quality_score >= 50:
-            outcome = 'TP1_HIT'
-            exit_price = tp_levels[0]
+        # Среднее качество → TP1
+        elif quality_score >= 55:
+            return 'TP1_HIT', tp_levels[0]
 
-        elif quality_score >= 35:
-            # ✅ Детерминизм через hash
+        # Низкое качество → вероятностная оценка
+        elif quality_score >= 40:
+            # Используем детерминированный hash для консистентности
             decision_hash = hash(f"{entry}{stop}{confidence}") % 10
 
-            if decision_hash >= 4:  # 60% на TP1
-                outcome = 'TP1_HIT'
-                exit_price = tp_levels[0]
-            else:  # 40% на SL
-                outcome = 'SL_HIT'
-                exit_price = stop
+            if decision_hash >= 5:  # 50% на TP1
+                return 'TP1_HIT', tp_levels[0]
+            else:  # 50% на SL
+                return 'SL_HIT', stop
 
+        # Очень низкое качество → SL
         else:
-            outcome = 'SL_HIT'
-            exit_price = stop
-
-        return outcome, exit_price
+            return 'SL_HIT', stop
 
     def _score_order_blocks(self, comprehensive_data: Dict) -> float:
-        """
-        ✅ НОВОЕ: Скоринг Order Blocks с fallback логикой
-        """
+        """Скоринг Order Blocks с fallback логикой"""
         try:
-            # Пытаемся найти OB данные
             ob_data = None
 
-            # Вариант 1: прямо в comprehensive_data
             if 'order_blocks' in comprehensive_data:
                 ob_data = comprehensive_data['order_blocks']
-            # Вариант 2: внутри вложенного словаря
             elif 'smc_data' in comprehensive_data:
                 smc = comprehensive_data.get('smc_data', {})
                 if isinstance(smc, dict):
                     ob_data = smc.get('order_blocks')
 
             if not ob_data or not isinstance(ob_data, dict):
-                logger.debug("No OB data found or invalid format")
                 return 0
 
             nearest_ob = ob_data.get('nearest_ob')
 
             if not nearest_ob or not isinstance(nearest_ob, dict):
-                logger.debug("No nearest OB found")
                 return 0
 
             score = 0
 
-            # Fresh OB = сильный сигнал
             is_mitigated = nearest_ob.get('is_mitigated', True)
             if not is_mitigated:
                 score += 8
             else:
                 score += 4
 
-            # Близкий OB = точный entry
             distance = nearest_ob.get('distance_pct', 100)
             if distance < 2.0:
                 score += 5
             elif distance < 5.0:
                 score += 2
 
-            # Age bonus (если есть)
             age = nearest_ob.get('age_in_candles', 100)
             if age <= 10:
                 score += 2
 
-            return min(10, score)  # Макс 10 баллов
+            return min(10, score)
 
         except Exception as e:
             logger.debug(f"OB scoring error: {e}")
             return 0
 
     def _score_imbalances(self, comprehensive_data: Dict) -> float:
-        """
-        ✅ НОВОЕ: Скоринг Imbalances с fallback логикой
-        """
+        """Скоринг Imbalances с fallback логикой"""
         try:
-            # Пытаемся найти Imbalance данные
             imb_data = None
 
             if 'imbalances' in comprehensive_data:
@@ -322,18 +398,15 @@ class Backtester:
                     imb_data = smc.get('imbalances')
 
             if not imb_data or not isinstance(imb_data, dict):
-                logger.debug("No Imbalance data found")
                 return 0
 
             nearest_imb = imb_data.get('nearest_imbalance')
 
             if not nearest_imb or not isinstance(nearest_imb, dict):
-                logger.debug("No nearest Imbalance found")
                 return 0
 
             score = 0
 
-            # Unfilled FVG = сильнее
             is_filled = nearest_imb.get('is_filled', True)
             if not is_filled:
                 score += 5
@@ -342,18 +415,15 @@ class Backtester:
                 if fill_pct < 50:
                     score += 3
 
-            return min(5, score)  # Макс 5 баллов
+            return min(5, score)
 
         except Exception as e:
             logger.debug(f"Imbalance scoring error: {e}")
             return 0
 
     def _score_sweeps(self, comprehensive_data: Dict) -> float:
-        """
-        ✅ НОВОЕ: Скоринг Liquidity Sweeps с fallback логикой
-        """
+        """Скоринг Liquidity Sweeps с fallback логикой"""
         try:
-            # Пытаемся найти Sweep данные
             sweep_data = None
 
             if 'liquidity_sweep' in comprehensive_data:
@@ -364,7 +434,6 @@ class Backtester:
                     sweep_data = smc.get('liquidity_sweep')
 
             if not sweep_data or not isinstance(sweep_data, dict):
-                logger.debug("No Sweep data found")
                 return 0
 
             sweep_detected = sweep_data.get('sweep_detected', False)
@@ -374,14 +443,13 @@ class Backtester:
 
             score = 0
 
-            # Reversal confirmed = сильнее
             reversal_confirmed = sweep_data.get('reversal_confirmed', False)
             if reversal_confirmed:
                 score += 5
             else:
                 score += 2
 
-            return min(5, score)  # Макс 5 баллов
+            return min(5, score)
 
         except Exception as e:
             logger.debug(f"Sweep scoring error: {e}")
