@@ -1,0 +1,48 @@
+{
+  "symbol": "CVXUSDT",
+  "signal": "SHORT",
+  "confidence": 78,
+  "entry_price": 1.885,
+  "stop_loss": 1.945,
+  "take_profit_levels": [
+    1.855,
+    1.835,
+    1.815
+  ],
+  "risk_reward_ratio": 0.83,
+  "analysis": "SHORT: Premium resistance verified in Stage 1 (near local high). Early ATR entry (38% progress, avg 12.9%). Below EMA200 (-1.1%). Strong volume ratio 1.59x. Fresh BULLISH FVG unfilled below price. Score: 78/115.",
+  "timestamp": "2025-12-04T11:13:27.609863",
+  "comprehensive_data": {
+    "current_price": 1.885,
+    "indicators_1h": {
+      "price": 1.885,
+      "ema9": 1.8737106153524654,
+      "ema21": 1.835454778091623,
+      "ema50": 1.790809323569702,
+      "rsi": 66.57355238585802,
+      "volume_ratio": 0.2177709932717524
+    },
+    "indicators_4h": {
+      "price": 1.897,
+      "ema9": 1.8095658582773204,
+      "ema21": 1.7821445243953304,
+      "ema50": 1.7878914535259087,
+      "rsi": 65.31450621949377,
+      "volume_ratio": 1.5867279607829392
+    },
+    "market_data": {
+      "funding_rate": 5e-05,
+      "oi_change_24h": -0.19,
+      "spread_pct": 0.1061
+    },
+    "correlation": {
+      "correlation": 0.654,
+      "should_block": false
+    },
+    "volume_profile": {
+      "poc": 2.23132,
+      "value_area_high": 2.3294,
+      "value_area_low": 1.7899600000000002
+    }
+  }
+}
