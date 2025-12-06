@@ -1,11 +1,9 @@
 """
-Telegram Bot Main - Multi-User Support
+Telegram Bot Main - Multi-User Support (BACKTEST FIX)
 Файл: telegram/bot_main.py
 
-✅ ОБНОВЛЕНО:
-- Поддержка нескольких пользователей через список user_ids
-- Метод _is_authorized() для проверки доступа
-- Метод _notify_all_users() для массовых уведомлений
+✅ ИСПРАВЛЕНО:
+- Async вызов backtester.run_backtest()
 """
 
 import asyncio
@@ -50,7 +48,7 @@ class TradingBotTelegram:
     def __init__(
             self,
             bot_token: str,
-            user_ids: List[int],  # ✅ Теперь список
+            user_ids: List[int],
             group_id: int
     ):
         self.bot = Bot(token=bot_token)
@@ -59,19 +57,16 @@ class TradingBotTelegram:
         self.router = Router()
         self.dp.include_router(self.router)
 
-        # ✅ НОВОЕ: Список разрешенных пользователей
         self.user_ids = user_ids if isinstance(user_ids, list) else [user_ids]
         self.primary_user_id = self.user_ids[0] if self.user_ids else 0
         self.group_id = group_id
         self.trading_bot_running = False
         self._typing_task = None
 
-        # Signal Storage & Backtester
         from utils import get_signal_storage, get_backtester
         self.signal_storage = get_signal_storage()
         self.backtester = get_backtester()
 
-        # Statistics file
         from config import config
         self.stats_file = config.LOGS_DIR / 'bot_statistics.json'
 
@@ -82,7 +77,6 @@ class TradingBotTelegram:
             f"user_ids={self.user_ids}, group_id={group_id}"
         )
 
-    # ✅ НОВЫЙ МЕТОД: Проверка доступа
     def _is_authorized(self, user_id: int) -> bool:
         """Проверка что пользователь имеет доступ"""
         return user_id in self.user_ids
@@ -91,7 +85,6 @@ class TradingBotTelegram:
         """Регистрация обработчиков команд"""
         self.dp.message.register(self.start_command, Command(commands=["start"]))
 
-        # Текстовые сообщения
         self.dp.message.register(
             self.handle_run_analysis,
             F.text == "▶️ Запустить сейчас"
@@ -117,7 +110,6 @@ class TradingBotTelegram:
             F.text == "🛑 Остановить"
         )
 
-        # FSM handlers
         self.dp.message.register(
             self.process_symbol_input,
             ManualAnalysisStates.waiting_for_symbol
@@ -131,7 +123,6 @@ class TradingBotTelegram:
         """Обработка команды /start"""
         user_id = message.from_user.id
 
-        # ✅ ИЗМЕНЕНО: Проверка через список
         if not self._is_authorized(user_id):
             await message.reply("❌ Доступ запрещён")
             return
@@ -172,7 +163,6 @@ class TradingBotTelegram:
         """Начать диалог для ручного анализа пары"""
         user_id = message.from_user.id
 
-        # ✅ ИЗМЕНЕНО
         if not self._is_authorized(user_id):
             return
 
@@ -189,7 +179,6 @@ class TradingBotTelegram:
         """Обработка ввода символа"""
         user_id = message.from_user.id
 
-        # ✅ ИЗМЕНЕНО
         if not self._is_authorized(user_id):
             return
 
@@ -243,7 +232,6 @@ class TradingBotTelegram:
         """Обработка выбора направления"""
         user_id = callback.from_user.id
 
-        # ✅ ИЗМЕНЕНО
         if not self._is_authorized(user_id):
             await callback.answer("❌ Доступ запрещён", show_alert=True)
             return
@@ -290,10 +278,7 @@ class TradingBotTelegram:
                 await self._stop_typing_indicator()
 
             if result and result.signal != 'NO_SIGNAL':
-                # Сохраняем сигнал
                 self.signal_storage.save_signal(result)
-
-                # Отправляем в группу
                 await self._send_signals_to_group([result])
 
                 await self.bot.send_message(
@@ -347,7 +332,6 @@ class TradingBotTelegram:
 
     async def handle_run_analysis(self, message: Message):
         """Обработчик кнопки '▶️ Запустить сейчас'"""
-        # ✅ ИЗМЕНЕНО: Проверка доступа
         if not self._is_authorized(message.from_user.id):
             return
 
@@ -370,7 +354,6 @@ class TradingBotTelegram:
                 from stages import run_stage1, run_stage2, run_stage3
                 from data_providers import get_all_trading_pairs, cleanup_session
 
-                # Stage 1
                 logger.info("Manual run: Starting Stage 1")
                 pairs = await get_all_trading_pairs()
                 candidates = await run_stage1(pairs)
@@ -390,7 +373,6 @@ class TradingBotTelegram:
                     parse_mode="HTML"
                 )
 
-                # Stage 2
                 logger.info("Manual run: Starting Stage 2")
                 selected_pairs = await run_stage2(candidates)
 
@@ -412,7 +394,6 @@ class TradingBotTelegram:
                     parse_mode="HTML"
                 )
 
-                # Stage 3
                 logger.info("Manual run: Starting Stage 3")
                 approved_signals, rejected_signals = await run_stage3(selected_pairs)
 
@@ -421,12 +402,10 @@ class TradingBotTelegram:
             finally:
                 await self._stop_typing_indicator()
 
-            # Сохраняем сигналы
             if approved_signals:
                 saved = self.signal_storage.save_signals_batch(approved_signals)
                 logger.info(f"Saved {saved} signals to storage")
 
-            # ✅ ИЗМЕНЕНО: Уведомляем инициатора (не всех)
             if approved_signals:
                 await self._send_signals_to_group(approved_signals)
 
@@ -453,7 +432,6 @@ class TradingBotTelegram:
             if rejected_signals:
                 await self._send_rejected_signals(rejected_signals, user_id)
 
-            # Обновляем статистику
             self._update_statistics(len(approved_signals), len(rejected_signals))
 
         except Exception as e:
@@ -473,14 +451,13 @@ class TradingBotTelegram:
             )
 
     # ========================================================================
-    # BACKTESTING
+    # BACKTESTING (✅ FIXED)
     # ========================================================================
 
     async def handle_backtest(self, message: Message):
         """Запуск backtesting"""
         user_id = message.from_user.id
 
-        # ✅ ИЗМЕНЕНО
         if not self._is_authorized(user_id):
             return
 
@@ -502,7 +479,8 @@ class TradingBotTelegram:
                 parse_mode="HTML"
             )
 
-            result = self.backtester.run_backtest(signals)
+            # ✅ ИСПРАВЛЕНО: Async вызов
+            result = await self.backtester.run_backtest(signals)
 
             from utils import format_backtest_report
             report = format_backtest_report(result)
@@ -527,7 +505,6 @@ class TradingBotTelegram:
 
     async def show_status(self, message: Message):
         """Показать статус бота"""
-        # ✅ ИЗМЕНЕНО
         if not self._is_authorized(message.from_user.id):
             return
 
@@ -547,7 +524,6 @@ class TradingBotTelegram:
 
     async def show_statistics(self, message: Message):
         """Показать статистику"""
-        # ✅ ИЗМЕНЕНО
         if not self._is_authorized(message.from_user.id):
             return
 
@@ -611,7 +587,6 @@ class TradingBotTelegram:
 
     async def stop_bot(self, message: Message):
         """Остановка бота"""
-        # ✅ ИЗМЕНЕНО
         if not self._is_authorized(message.from_user.id):
             return
 
@@ -631,7 +606,6 @@ class TradingBotTelegram:
             return ""
         return html.escape(str(text), quote=False)
 
-    # ✅ НОВОЕ: Отправка уведомлений ВСЕМ пользователям
     async def _notify_all_users(self, text: str):
         """Отправить уведомление всем разрешенным пользователям"""
         for user_id in self.user_ids:
@@ -765,7 +739,7 @@ async def run_telegram_bot():
 
     bot = TradingBotTelegram(
         bot_token=config.TELEGRAM_BOT_TOKEN,
-        user_ids=config.TELEGRAM_USER_IDS,  # ✅ Передаём список
+        user_ids=config.TELEGRAM_USER_IDS,
         group_id=config.TELEGRAM_GROUP_ID
     )
 

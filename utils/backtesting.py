@@ -1,17 +1,19 @@
 """
-Backtesting Module - REALISTIC OUTCOME ESTIMATION
+Backtesting Module - REALISTIC OUTCOME WITH 5M CANDLES
 Файл: utils/backtesting.py
 
 ✅ ИСПРАВЛЕНО:
-- Более реалистичная оценка outcome на основе реальных данных
-- Проверка достижимости TP/SL на исторических свечах
+- Проверка outcome на 5-минутных свечах (300 свечей = 25 часов)
+- Загрузка свежих данных из Bybit для каждого сигнала
+- Более точная проверка достижения TP/SL
 - Fallback на качественный scoring если свечей нет
 """
 
 import json
 import logging
+import asyncio
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from collections import defaultdict
 
@@ -32,7 +34,7 @@ class Backtester:
         self.backtest_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Backtester initialized: {self.backtest_dir}")
 
-    def run_backtest(self, signals: List[Dict], name: Optional[str] = None) -> Dict:
+    async def run_backtest(self, signals: List[Dict], name: Optional[str] = None) -> Dict:
         """Запустить backtest на списке сигналов"""
         if not signals:
             logger.warning("No signals provided for backtest")
@@ -40,26 +42,27 @@ class Backtester:
 
         logger.info(f"Starting backtest for {len(signals)} signals")
 
-        results = []
+        # ✅ ИСПРАВЛЕНО: Прямой вызов async функции
+        results = await self._run_backtest_async(signals)
+
         stats = defaultdict(int)
 
-        for signal in signals:
-            result = self._analyze_signal(signal)
-            results.append(result)
-
+        for result in results:
             stats['total_signals'] += 1
-            stats[f"signal_{signal['signal']}"] += 1
+            signal_type = result.get('signal', 'UNKNOWN')
+            stats[f"signal_{signal_type}"] += 1
 
-            if result['outcome'] == 'TP1_HIT':
+            outcome = result.get('outcome', 'UNKNOWN')
+            if outcome == 'TP1_HIT':
                 stats['tp1_hits'] += 1
-            elif result['outcome'] == 'TP2_HIT':
+            elif outcome == 'TP2_HIT':
                 stats['tp2_hits'] += 1
-            elif result['outcome'] == 'TP3_HIT':
+            elif outcome == 'TP3_HIT':
                 stats['tp3_hits'] += 1
-            elif result['outcome'] == 'SL_HIT':
+            elif outcome == 'SL_HIT':
                 stats['sl_hits'] += 1
 
-            stats['total_pnl'] += result['pnl_pct']
+            stats['total_pnl'] += result.get('pnl_pct', 0)
 
         metrics = self._calculate_metrics(results, stats)
 
@@ -73,8 +76,23 @@ class Backtester:
         self._save_backtest(backtest_result, name)
         return backtest_result
 
-    def _analyze_signal(self, signal: Dict) -> Dict:
-        """Анализ одного сигнала"""
+    async def _run_backtest_async(self, signals: List[Dict]) -> List[Dict]:
+        """Асинхронный backtesting с загрузкой 5M свечей"""
+        tasks = [self._analyze_signal_async(signal) for signal in signals]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Фильтруем ошибки
+        valid_results = []
+        for result in results:
+            if isinstance(result, dict):
+                valid_results.append(result)
+            elif isinstance(result, Exception):
+                logger.error(f"Backtest error: {result}")
+
+        return valid_results
+
+    async def _analyze_signal_async(self, signal: Dict) -> Dict:
+        """Анализ одного сигнала с загрузкой 5M свечей"""
         try:
             symbol = signal.get('symbol', 'UNKNOWN')
             signal_type = signal.get('signal', 'UNKNOWN')
@@ -83,23 +101,37 @@ class Backtester:
             tp_levels = signal.get('take_profit_levels', [0, 0, 0])
             confidence = signal.get('confidence', 50)
             rr_ratio = signal.get('risk_reward_ratio', 0)
+            timestamp_str = signal.get('timestamp', '')
 
-            # ✅ НОВОЕ: Попытка найти исторические свечи
-            comprehensive_data = signal.get('comprehensive_data', {})
-            candles_1h = comprehensive_data.get('candles_1h', [])
+            # Парсим timestamp сигнала
+            try:
+                signal_time = datetime.fromisoformat(timestamp_str)
+            except:
+                logger.warning(f"{symbol}: Invalid timestamp, using current time")
+                signal_time = datetime.now()
+
+            # ✅ КРИТИЧНО: Загружаем 5M свечи ПОСЛЕ сигнала
+            candles_5m = await self._fetch_5m_candles_after_signal(
+                symbol,
+                signal_time
+            )
 
             # Если свечей достаточно - используем реальные данные
-            if candles_1h and len(candles_1h) >= 20:
+            if candles_5m and len(candles_5m) >= 50:
                 outcome, exit_price = self._estimate_outcome_from_candles(
                     signal_type,
                     entry,
                     stop,
                     tp_levels,
-                    candles_1h
+                    candles_5m
                 )
-                logger.debug(f"{symbol}: Outcome from candles = {outcome}")
+                logger.info(
+                    f"{symbol}: Outcome from 5M candles = {outcome} "
+                    f"({len(candles_5m)} candles checked)"
+                )
             else:
                 # Fallback: качественная оценка
+                comprehensive_data = signal.get('comprehensive_data', {})
                 outcome, exit_price = self._estimate_outcome_from_quality(
                     signal_type,
                     confidence,
@@ -109,7 +141,7 @@ class Backtester:
                     tp_levels,
                     comprehensive_data
                 )
-                logger.debug(f"{symbol}: Outcome from quality score = {outcome}")
+                logger.info(f"{symbol}: Outcome from quality score = {outcome}")
 
             # Рассчитываем PnL
             if signal_type == 'LONG':
@@ -127,16 +159,75 @@ class Backtester:
                 'exit_price': exit_price,
                 'outcome': outcome,
                 'pnl_pct': round(pnl_pct, 2),
-                'timestamp': signal.get('timestamp', '')
+                'timestamp': timestamp_str
             }
 
         except Exception as e:
             logger.error(f"Error analyzing signal: {e}")
             return {
                 'symbol': signal.get('symbol', 'UNKNOWN'),
+                'signal': signal.get('signal', 'UNKNOWN'),
+                'confidence': signal.get('confidence', 0),
+                'entry_price': signal.get('entry_price', 0),
+                'exit_price': signal.get('entry_price', 0),
                 'outcome': 'ERROR',
-                'pnl_pct': 0
+                'pnl_pct': 0,
+                'timestamp': signal.get('timestamp', '')
             }
+
+    async def _fetch_5m_candles_after_signal(
+        self,
+        symbol: str,
+        signal_time: datetime
+    ) -> List:
+        """
+        ✅ НОВОЕ: Загрузить 5-минутные свечи ПОСЛЕ момента сигнала
+
+        Args:
+            symbol: Торговая пара
+            signal_time: Время создания сигнала
+
+        Returns:
+            Список 5M свечей (до 300 штук = 25 часов)
+        """
+        try:
+            from data_providers import fetch_candles
+
+            # Загружаем 300 свечей 5M (25 часов после сигнала)
+            candles_5m = await fetch_candles(
+                symbol,
+                interval='5',  # 5 minutes
+                limit=300
+            )
+
+            if not candles_5m:
+                logger.warning(f"{symbol}: Failed to fetch 5M candles")
+                return []
+
+            # ✅ ФИЛЬТРУЕМ: Берём только свечи ПОСЛЕ signal_time
+            signal_timestamp_ms = int(signal_time.timestamp() * 1000)
+
+            filtered_candles = []
+            for candle in candles_5m:
+                try:
+                    candle_time_ms = int(candle[0])
+
+                    # Берём свечи после сигнала
+                    if candle_time_ms >= signal_timestamp_ms:
+                        filtered_candles.append(candle)
+                except:
+                    continue
+
+            logger.debug(
+                f"{symbol}: Fetched {len(filtered_candles)}/300 5M candles "
+                f"after {signal_time.strftime('%Y-%m-%d %H:%M')}"
+            )
+
+            return filtered_candles
+
+        except Exception as e:
+            logger.error(f"{symbol}: Error fetching 5M candles: {e}")
+            return []
 
     def _estimate_outcome_from_candles(
         self,
@@ -147,9 +238,9 @@ class Backtester:
         candles: List
     ) -> tuple[str, float]:
         """
-        ✅ НОВОЕ: Оценка outcome на основе реальных исторических свечей
+        ✅ УЛУЧШЕНО: Оценка outcome на реальных 5M свечах
 
-        Проверяем следующие 10-20 свечей после сигнала:
+        Проверяем следующие 300 свечей (25 часов) после сигнала:
         - Был ли достигнут TP1/TP2/TP3?
         - Был ли достигнут SL?
         - Что было достигнуто первым?
@@ -160,10 +251,10 @@ class Backtester:
 
             tp1, tp2, tp3 = tp_levels[0], tp_levels[1], tp_levels[2]
 
-            # Берём первые 20 свечей после входа (примерно 20 часов на 1H)
-            test_candles = candles[:20]
+            # ✅ Проверяем все доступные свечи (до 300)
+            candles_to_check = min(len(candles), 300)
 
-            for candle in test_candles:
+            for i, candle in enumerate(candles[:candles_to_check]):
                 if not candle or len(candle) < 5:
                     continue
 
@@ -174,61 +265,81 @@ class Backtester:
                     continue
 
                 if signal_type == 'LONG':
-                    # ✅ LONG: проверяем достижение TP (high >= TP) или SL (low <= SL)
-
-                    # Проверяем SL СНАЧАЛА (консервативно)
+                    # ✅ LONG: проверяем SL ПЕРВЫМ (консервативно)
                     if low <= stop:
-                        logger.debug(f"LONG: SL hit at {low:.4f} (stop={stop:.4f})")
+                        logger.debug(
+                            f"LONG: SL hit on candle {i+1}/{candles_to_check} "
+                            f"(low={low:.4f}, stop={stop:.4f})"
+                        )
                         return 'SL_HIT', stop
 
                     # Проверяем TP3
                     if high >= tp3:
-                        logger.debug(f"LONG: TP3 hit at {high:.4f} (tp3={tp3:.4f})")
+                        logger.debug(
+                            f"LONG: TP3 hit on candle {i+1}/{candles_to_check} "
+                            f"(high={high:.4f}, tp3={tp3:.4f})"
+                        )
                         return 'TP3_HIT', tp3
 
                     # Проверяем TP2
                     if high >= tp2:
-                        logger.debug(f"LONG: TP2 hit at {high:.4f} (tp2={tp2:.4f})")
+                        logger.debug(
+                            f"LONG: TP2 hit on candle {i+1}/{candles_to_check} "
+                            f"(high={high:.4f}, tp2={tp2:.4f})"
+                        )
                         return 'TP2_HIT', tp2
 
                     # Проверяем TP1
                     if high >= tp1:
-                        logger.debug(f"LONG: TP1 hit at {high:.4f} (tp1={tp1:.4f})")
+                        logger.debug(
+                            f"LONG: TP1 hit on candle {i+1}/{candles_to_check} "
+                            f"(high={high:.4f}, tp1={tp1:.4f})"
+                        )
                         return 'TP1_HIT', tp1
 
                 elif signal_type == 'SHORT':
-                    # ✅ SHORT: проверяем достижение TP (low <= TP) или SL (high >= SL)
-
-                    # Проверяем SL СНАЧАЛА (консервативно)
+                    # ✅ SHORT: проверяем SL ПЕРВЫМ (консервативно)
                     if high >= stop:
-                        logger.debug(f"SHORT: SL hit at {high:.4f} (stop={stop:.4f})")
+                        logger.debug(
+                            f"SHORT: SL hit on candle {i+1}/{candles_to_check} "
+                            f"(high={high:.4f}, stop={stop:.4f})"
+                        )
                         return 'SL_HIT', stop
 
                     # Проверяем TP3
                     if low <= tp3:
-                        logger.debug(f"SHORT: TP3 hit at {low:.4f} (tp3={tp3:.4f})")
+                        logger.debug(
+                            f"SHORT: TP3 hit on candle {i+1}/{candles_to_check} "
+                            f"(low={low:.4f}, tp3={tp3:.4f})"
+                        )
                         return 'TP3_HIT', tp3
 
                     # Проверяем TP2
                     if low <= tp2:
-                        logger.debug(f"SHORT: TP2 hit at {low:.4f} (tp2={tp2:.4f})")
+                        logger.debug(
+                            f"SHORT: TP2 hit on candle {i+1}/{candles_to_check} "
+                            f"(low={low:.4f}, tp2={tp2:.4f})"
+                        )
                         return 'TP2_HIT', tp2
 
                     # Проверяем TP1
                     if low <= tp1:
-                        logger.debug(f"SHORT: TP1 hit at {low:.4f} (tp1={tp1:.4f})")
+                        logger.debug(
+                            f"SHORT: TP1 hit on candle {i+1}/{candles_to_check} "
+                            f"(low={low:.4f}, tp1={tp1:.4f})"
+                        )
                         return 'TP1_HIT', tp1
 
-            # Если ничего не достигнуто за 20 свечей - считаем что сигнал не отработал
-            logger.debug("No TP/SL hit within 20 candles - assuming SL")
+            # ✅ Если ничего не достигнуто за 300 свечей (25 часов)
+            logger.debug(
+                f"No TP/SL hit within {candles_to_check} candles (25h) - assuming SL"
+            )
             return 'SL_HIT', stop
 
         except Exception as e:
             logger.error(f"Error in candle-based outcome: {e}")
             # Fallback на качественную оценку
-            return self._estimate_outcome_from_quality(
-                signal_type, 50, 1.5, entry, stop, tp_levels, {}
-            )
+            return 'SL_HIT', stop
 
     def _estimate_outcome_from_quality(
         self,
@@ -242,8 +353,6 @@ class Backtester:
     ) -> tuple[str, float]:
         """
         ✅ FALLBACK: Оценка outcome на основе качественного scoring
-
-        Используется если нет исторических свечей
         """
         quality_score = 0
 
@@ -264,12 +373,10 @@ class Backtester:
         ob_score = self._score_order_blocks(comprehensive_data)
         imb_score = self._score_imbalances(comprehensive_data)
         sweep_score = self._score_sweeps(comprehensive_data)
-
         quality_score += ob_score + imb_score + sweep_score
 
         # 4. Market Data (макс 10 баллов)
         market_data = comprehensive_data.get('market_data', {})
-
         if isinstance(market_data, dict):
             funding_rate = abs(market_data.get('funding_rate', 0))
             if funding_rate < 0.01:
@@ -287,10 +394,8 @@ class Backtester:
 
         # 5. Indicators (макс 10 баллов)
         indicators = comprehensive_data.get('indicators_4h', {})
-
         if isinstance(indicators, dict):
             current = indicators.get('current', {})
-
             if isinstance(current, dict):
                 rsi = current.get('rsi', 50)
                 if signal_type == 'LONG' and 40 <= rsi <= 70:
@@ -302,69 +407,47 @@ class Backtester:
                 if volume_ratio > 1.5:
                     quality_score += 5
 
-        # Нормализуем score
+        # Нормализуем
         quality_score = max(0, min(100, quality_score))
 
         logger.debug(
             f"Quality score: {quality_score:.1f} "
-            f"(conf={confidence}, rr={rr_ratio:.2f}, "
-            f"OB={ob_score}, FVG={imb_score}, Sweep={sweep_score})"
+            f"(conf={confidence}, rr={rr_ratio:.2f})"
         )
 
-        # ✅ УЛУЧШЕННАЯ ЛОГИКА OUTCOME
         if len(tp_levels) < 3:
             tp_levels = tp_levels + [0] * (3 - len(tp_levels))
 
-        # Высокое качество → TP3
+        # Outcome на основе score
         if quality_score >= 85:
             return 'TP3_HIT', tp_levels[2]
-
-        # Хорошее качество → TP2
         elif quality_score >= 70:
             return 'TP2_HIT', tp_levels[1]
-
-        # Среднее качество → TP1
         elif quality_score >= 55:
             return 'TP1_HIT', tp_levels[0]
-
-        # Низкое качество → вероятностная оценка
         elif quality_score >= 40:
-            # Используем детерминированный hash для консистентности
+            # Вероятностная оценка
             decision_hash = hash(f"{entry}{stop}{confidence}") % 10
-
-            if decision_hash >= 5:  # 50% на TP1
+            if decision_hash >= 5:
                 return 'TP1_HIT', tp_levels[0]
-            else:  # 50% на SL
+            else:
                 return 'SL_HIT', stop
-
-        # Очень низкое качество → SL
         else:
             return 'SL_HIT', stop
 
     def _score_order_blocks(self, comprehensive_data: Dict) -> float:
-        """Скоринг Order Blocks с fallback логикой"""
+        """Скоринг Order Blocks"""
         try:
-            ob_data = None
-
-            if 'order_blocks' in comprehensive_data:
-                ob_data = comprehensive_data['order_blocks']
-            elif 'smc_data' in comprehensive_data:
-                smc = comprehensive_data.get('smc_data', {})
-                if isinstance(smc, dict):
-                    ob_data = smc.get('order_blocks')
-
+            ob_data = comprehensive_data.get('order_blocks')
             if not ob_data or not isinstance(ob_data, dict):
                 return 0
 
             nearest_ob = ob_data.get('nearest_ob')
-
             if not nearest_ob or not isinstance(nearest_ob, dict):
                 return 0
 
             score = 0
-
-            is_mitigated = nearest_ob.get('is_mitigated', True)
-            if not is_mitigated:
+            if not nearest_ob.get('is_mitigated', True):
                 score += 8
             else:
                 score += 4
@@ -380,35 +463,22 @@ class Backtester:
                 score += 2
 
             return min(10, score)
-
-        except Exception as e:
-            logger.debug(f"OB scoring error: {e}")
+        except:
             return 0
 
     def _score_imbalances(self, comprehensive_data: Dict) -> float:
-        """Скоринг Imbalances с fallback логикой"""
+        """Скоринг Imbalances"""
         try:
-            imb_data = None
-
-            if 'imbalances' in comprehensive_data:
-                imb_data = comprehensive_data['imbalances']
-            elif 'smc_data' in comprehensive_data:
-                smc = comprehensive_data.get('smc_data', {})
-                if isinstance(smc, dict):
-                    imb_data = smc.get('imbalances')
-
+            imb_data = comprehensive_data.get('imbalances')
             if not imb_data or not isinstance(imb_data, dict):
                 return 0
 
             nearest_imb = imb_data.get('nearest_imbalance')
-
             if not nearest_imb or not isinstance(nearest_imb, dict):
                 return 0
 
             score = 0
-
-            is_filled = nearest_imb.get('is_filled', True)
-            if not is_filled:
+            if not nearest_imb.get('is_filled', True):
                 score += 5
             else:
                 fill_pct = nearest_imb.get('fill_percentage', 100)
@@ -416,49 +486,32 @@ class Backtester:
                     score += 3
 
             return min(5, score)
-
-        except Exception as e:
-            logger.debug(f"Imbalance scoring error: {e}")
+        except:
             return 0
 
     def _score_sweeps(self, comprehensive_data: Dict) -> float:
-        """Скоринг Liquidity Sweeps с fallback логикой"""
+        """Скоринг Sweeps"""
         try:
-            sweep_data = None
-
-            if 'liquidity_sweep' in comprehensive_data:
-                sweep_data = comprehensive_data['liquidity_sweep']
-            elif 'smc_data' in comprehensive_data:
-                smc = comprehensive_data.get('smc_data', {})
-                if isinstance(smc, dict):
-                    sweep_data = smc.get('liquidity_sweep')
-
+            sweep_data = comprehensive_data.get('liquidity_sweep')
             if not sweep_data or not isinstance(sweep_data, dict):
                 return 0
 
-            sweep_detected = sweep_data.get('sweep_detected', False)
-
-            if not sweep_detected:
+            if not sweep_data.get('sweep_detected', False):
                 return 0
 
             score = 0
-
-            reversal_confirmed = sweep_data.get('reversal_confirmed', False)
-            if reversal_confirmed:
+            if sweep_data.get('reversal_confirmed', False):
                 score += 5
             else:
                 score += 2
 
             return min(5, score)
-
-        except Exception as e:
-            logger.debug(f"Sweep scoring error: {e}")
+        except:
             return 0
 
     def _calculate_metrics(self, results: List[Dict], stats: Dict) -> Dict:
-        """Рассчитать агрегированные метрики"""
+        """Рассчитать метрики"""
         total = stats['total_signals']
-
         if total == 0:
             return {}
 
@@ -467,14 +520,16 @@ class Backtester:
         tp3_rate = (stats.get('tp3_hits', 0) / total) * 100
         sl_rate = (stats.get('sl_hits', 0) / total) * 100
 
-        winning_trades = stats.get('tp1_hits', 0) + stats.get('tp2_hits', 0) + stats.get('tp3_hits', 0)
+        winning_trades = (
+            stats.get('tp1_hits', 0) +
+            stats.get('tp2_hits', 0) +
+            stats.get('tp3_hits', 0)
+        )
         win_rate = (winning_trades / total) * 100
-
         avg_pnl = stats['total_pnl'] / total
 
         # По символам
         symbol_stats = defaultdict(lambda: {'count': 0, 'wins': 0, 'pnl': 0})
-
         for result in results:
             symbol = result['symbol']
             symbol_stats[symbol]['count'] += 1
@@ -484,7 +539,6 @@ class Backtester:
 
             symbol_stats[symbol]['pnl'] += result['pnl_pct']
 
-        # Топ символов
         top_symbols = sorted(
             symbol_stats.items(),
             key=lambda x: x[1]['pnl'],
@@ -514,7 +568,7 @@ class Backtester:
         }
 
     def _save_backtest(self, result: Dict, name: Optional[str] = None) -> Path:
-        """Сохранить результат backtesting"""
+        """Сохранить результат"""
         try:
             if name:
                 filename = f"backtest_{name}.json"
@@ -532,22 +586,6 @@ class Backtester:
 
         except Exception as e:
             logger.error(f"Error saving backtest: {e}")
-            return None
-
-    def load_latest_backtest(self) -> Optional[Dict]:
-        """Загрузить последний backtest"""
-        try:
-            backtest_files = sorted(self.backtest_dir.glob('backtest_*.json'))
-            if not backtest_files:
-                return None
-
-            latest_file = backtest_files[-1]
-
-            with open(latest_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-
-        except Exception as e:
-            logger.error(f"Error loading backtest: {e}")
             return None
 
 

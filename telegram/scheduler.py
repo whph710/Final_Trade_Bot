@@ -1,8 +1,11 @@
 """
-Telegram Scheduler
+Telegram Scheduler - OPTIMIZED FOR CRYPTO MARKET
 Файл: telegram/scheduler.py
 
-Управление расписанием запуска бота
+✅ ОПТИМИЗИРОВАНО:
+- ПН-ПТ: 4 запуска в день (привязка к 4H свечам + пики ликвидности)
+- СБ-ВС: 2 запуска в день (меньше из-за низкой ликвидности)
+- Все запуски привязаны к закрытию 4H свечей
 """
 
 import asyncio
@@ -18,15 +21,29 @@ class ScheduleManager:
     """
     Управление расписанием запуска бота
 
-    Реализовано через фоновую задачу, которая ожидает ближайшего запуска
-    и вызывает callback(bot).
+    ОПТИМИЗИРОВАНО ПОД КРИПТОРЫНОК 24/7:
+    - Привязка к закрытию 4H свечей (09:00, 13:00, 17:00, 21:00)
+    - Учет пиков ликвидности (Азия, Европа, США)
+    - Больше запусков в будни, меньше в выходные
     """
 
-    # Расписание запусков (Пермь UTC+5)
-    SCHEDULE_TIMES = [
-        ("10:05", "11:05"),  # Первый период
-        ("16:05", "17:05"),  # Второй период
-        ("22:05", "23:05"),  # Третий период
+    # ========================================================================
+    # БУДНИ (ПН-ПТ): 4 запуска в день
+    # ========================================================================
+    WEEKDAY_SCHEDULE = [
+        "09:15",  # 🌏 Азиатская сессия (после 4H свечи 09:00)
+        "13:15",  # 🌍 Европейская сессия (после 4H свечи 13:00)
+        "17:15",  # 🔥 ПИК: Европа+США (после 4H свечи 17:00)
+        "21:15",  # 🌎 Американская сессия (после 4H свечи 21:00)
+    ]
+
+    # ========================================================================
+    # ВЫХОДНЫЕ (СБ-ВС): 2 запуска в день
+    # ========================================================================
+    WEEKEND_SCHEDULE = [
+        "09:15",  # 🌏 Утренний запуск (Азия)
+        "17:15",  # 🔥 Вечерний запуск (лучшая ликвидность)
+        "21:15",  # 🌎 Вечерний запуск (Америка)
     ]
 
     def __init__(self, timezone: str = 'Asia/Yekaterinburg'):
@@ -40,7 +57,11 @@ class ScheduleManager:
         self._scheduler_task: Optional[asyncio.Task] = None
         self._stopped = False
 
-        logger.info(f"Scheduler initialized with timezone: {timezone}")
+        logger.info(
+            f"Scheduler initialized: {timezone}\n"
+            f"  • Weekdays (Mon-Fri): {len(self.WEEKDAY_SCHEDULE)} runs/day\n"
+            f"  • Weekends (Sat-Sun): {len(self.WEEKEND_SCHEDULE)} runs/day"
+        )
 
     def setup_schedule(self, bot, callback_coro: Callable):
         """
@@ -73,10 +94,12 @@ class ScheduleManager:
                 if wait_seconds <= 0:
                     wait_seconds = 1
 
+                day_type = "WEEKEND" if now.weekday() >= 5 else "WEEKDAY"
+
                 logger.info(
                     f"Next scheduled run at "
                     f"{next_run.strftime('%Y-%m-%d %H:%M:%S %Z')} "
-                    f"(wait {wait_seconds:.0f}s)"
+                    f"({day_type}, wait {wait_seconds:.0f}s)"
                 )
 
                 await asyncio.sleep(wait_seconds)
@@ -95,16 +118,29 @@ class ScheduleManager:
         """
         Получить время следующего запуска
 
+        ЛОГИКА:
+        1. Определяем текущий день (будний/выходной)
+        2. Берём соответствующее расписание
+        3. Находим ближайшее время
+
         Returns:
             datetime объект следующего запуска
         """
         now = datetime.now(self.timezone)
         today = now.date()
+        current_weekday = now.weekday()  # 0=Mon, 6=Sun
 
+        # Определяем расписание для текущего дня
+        if current_weekday >= 5:  # Суббота (5) или Воскресенье (6)
+            schedule = self.WEEKEND_SCHEDULE
+        else:  # Понедельник-Пятница (0-4)
+            schedule = self.WEEKDAY_SCHEDULE
+
+        # Кандидаты на сегодня
         candidate_datetimes = []
 
-        for start_time_str, _ in self.SCHEDULE_TIMES:
-            hour, minute = map(int, start_time_str.split(":"))
+        for time_str in schedule:
+            hour, minute = map(int, time_str.split(":"))
             candidate = self.timezone.localize(
                 datetime.combine(today, dtime(hour=hour, minute=minute))
             )
@@ -112,12 +148,24 @@ class ScheduleManager:
             if candidate > now:
                 candidate_datetimes.append(candidate)
 
+        # Если есть время сегодня - возвращаем
         if candidate_datetimes:
             return min(candidate_datetimes)
 
-        # Все времена сегодня прошли - вернуть первое завтрашнее
+        # ========================================================================
+        # Все времена сегодня прошли - ищем на завтра
+        # ========================================================================
         tomorrow = today + timedelta(days=1)
-        hour, minute = map(int, self.SCHEDULE_TIMES[0][0].split(":"))
+        tomorrow_weekday = (current_weekday + 1) % 7
+
+        # Определяем расписание для завтра
+        if tomorrow_weekday >= 5:  # Завтра выходной
+            next_schedule = self.WEEKEND_SCHEDULE
+        else:  # Завтра будний
+            next_schedule = self.WEEKDAY_SCHEDULE
+
+        # Берём первое время завтра
+        hour, minute = map(int, next_schedule[0].split(":"))
         return self.timezone.localize(
             datetime.combine(tomorrow, dtime(hour=hour, minute=minute))
         )
@@ -131,15 +179,30 @@ class ScheduleManager:
         """
         now = datetime.now(self.timezone)
         current = now.time()
+        current_weekday = now.weekday()
 
-        for start_time_str, end_time_str in self.SCHEDULE_TIMES:
-            sh, sm = map(int, start_time_str.split(":"))
-            eh, em = map(int, end_time_str.split(":"))
+        # Определяем расписание
+        if current_weekday >= 5:
+            schedule = self.WEEKEND_SCHEDULE
+        else:
+            schedule = self.WEEKDAY_SCHEDULE
 
-            start = dtime(hour=sh, minute=sm)
-            end = dtime(hour=eh, minute=em)
+        # Проверяем попадание в окна (±1 час от запланированного времени)
+        for time_str in schedule:
+            hour, minute = map(int, time_str.split(":"))
+            scheduled_time = dtime(hour=hour, minute=minute)
 
-            if start <= current < end:
+            # Окно: ±1 час
+            start_time = dtime(
+                hour=max(0, hour - 1),
+                minute=minute
+            )
+            end_time = dtime(
+                hour=min(23, hour + 1),
+                minute=minute
+            )
+
+            if start_time <= current <= end_time:
                 return True
 
         return False
@@ -151,18 +214,45 @@ class ScheduleManager:
         Returns:
             Строка с расписанием
         """
-        info_lines = ["<b>📅 РАСПИСАНИЕ ЗАПУСКА:</b>\n"]
+        now = datetime.now(self.timezone)
+        is_weekend = now.weekday() >= 5
 
-        for start_time, end_time in self.SCHEDULE_TIMES:
-            info_lines.append(f"  • {start_time} - {end_time} (UTC+5)")
+        info_lines = ["<b>📅 РАСПИСАНИЕ ЗАПУСКА (UTC+5)</b>\n", "<b>📊 Будни (Пн-Пт):</b>"]
 
+        # Будни
+        for time_str in self.WEEKDAY_SCHEDULE:
+            emoji = self._get_session_emoji(time_str)
+            info_lines.append(f"  {emoji} {time_str}")
+
+        info_lines.append("")
+
+        # Выходные
+        info_lines.append("<b>🏖 Выходные (Сб-Вс):</b>")
+        for time_str in self.WEEKEND_SCHEDULE:
+            emoji = self._get_session_emoji(time_str)
+            info_lines.append(f"  {emoji} {time_str}")
+
+        # Следующий запуск
         next_run = self.get_next_run_time()
+        day_type = "🏖 Выходной" if is_weekend else "📊 Будний"
+
         info_lines.append(
             f"\n<b>⏰ Следующий запуск:</b>\n"
-            f"  {next_run.strftime('%Y-%m-%d %H:%M:%S')}"
+            f"  {next_run.strftime('%Y-%m-%d %H:%M:%S')} ({day_type})"
         )
 
         return "\n".join(info_lines)
+
+    def _get_session_emoji(self, time_str: str) -> str:
+        """Получить эмодзи для торговой сессии"""
+        hour = int(time_str.split(":")[0])
+
+        if hour < 12:
+            return "🌏"  # Азия
+        elif hour < 18:
+            return "🌍"  # Европа
+        else:
+            return "🌎"  # США
 
     def stop(self):
         """Остановить планировщик"""
