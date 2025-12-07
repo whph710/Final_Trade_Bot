@@ -76,7 +76,12 @@ class Backtester:
                 stats['tp3_hits'] += 1
             elif outcome == 'SL_HIT':
                 stats['sl_hits'] += 1
+            elif outcome == 'ACTIVE':
+                stats['active_signals'] += 1
+                # ✅ Активные сигналы не учитываются в PnL и статистике
+                continue
 
+            # ✅ Учитываем PnL только для закрытых позиций (не ACTIVE)
             stats['total_pnl'] += result.get('pnl_pct', 0)
 
         metrics = self._calculate_metrics(results, stats)
@@ -106,11 +111,12 @@ class Backtester:
 
         for signal in signals:
             # ✅ ПРОВЕРКА: Если сигнал уже проверен (FINAL), используем результат из файла
+            # ACTIVE сигналы перепроверяются каждый раз, чтобы увидеть, достигли ли они TP/SL
             backtest_status = signal.get('backtest_status', 'NOT_CHECKED')
             backtest_result = signal.get('backtest_result')
             
             if backtest_status == 'FINAL' and backtest_result:
-                # Сигнал уже проверен, используем сохраненный результат
+                # Сигнал уже проверен (FINAL), используем сохраненный результат
                 result = {
                     'symbol': signal.get('symbol', 'UNKNOWN'),
                     'signal': signal.get('signal', 'UNKNOWN'),
@@ -129,7 +135,8 @@ class Backtester:
                     f"{backtest_result.get('outcome')}"
                 )
             else:
-                # Сигнал не проверен или проверен частично - запускаем backtesting
+                # ✅ Сигнал не проверен, проверен частично (CHECKED), или ACTIVE - запускаем backtesting
+                # ACTIVE сигналы перепроверяются, чтобы увидеть, достигли ли они TP/SL
                 try:
                     result = await self._analyze_signal_async(signal)
                     if isinstance(result, dict):
@@ -224,8 +231,10 @@ class Backtester:
                 )
                 logger.info(f"{symbol}: Outcome from quality score = {outcome} (no candles available)")
 
-            # Рассчитываем PnL
-            if signal_type == 'LONG':
+            # Рассчитываем PnL (для ACTIVE сигналов PnL = 0, так как позиция еще открыта)
+            if outcome == 'ACTIVE':
+                pnl_pct = 0  # Позиция еще открыта, PnL не рассчитывается
+            elif signal_type == 'LONG':
                 pnl_pct = ((exit_price - entry) / entry) * 100
             elif signal_type == 'SHORT':
                 pnl_pct = ((entry - exit_price) / entry) * 100
@@ -278,12 +287,13 @@ class Backtester:
             # Используем start_time для получения свечей начиная с signal_time
             signal_timestamp_ms = int(signal_time.timestamp() * 1000)
             
-            # Загружаем свечи начиная с момента сигнала (до 1000 свечей = 83 часа)
-            # Это гарантирует, что мы получим все свечи после сигнала
+            # ✅ Загружаем свечи начиная с момента сигнала
+            # Используем настройку из config
+            from config import config
             candles_5m = await fetch_candles(
                 symbol,
                 interval='5',  # 5 minutes
-                limit=1000,  # Максимум для надежности
+                limit=config.BACKTEST_CANDLES_LIMIT,  # ✅ Из config
                 start_time=signal_timestamp_ms  # ✅ КРИТИЧНО: Начинаем с момента сигнала
             )
 
@@ -322,7 +332,9 @@ class Backtester:
                 )
                 
                 # ✅ ПРОВЕРКА: Если первая свеча сильно позже сигнала, предупреждаем
-                if time_diff > 10:  # Больше 10 минут разницы
+                from config import config
+                time_diff_threshold = config.BACKTEST_TIME_DIFF_THRESHOLD_MIN
+                if time_diff > time_diff_threshold:  # ✅ Из config
                     logger.warning(
                         f"{symbol}: ⚠️ First candle is {time_diff:.1f} minutes after signal! "
                         f"May miss some price movements."
@@ -403,7 +415,9 @@ class Backtester:
                     high = float(candle[2])
                     low = float(candle[3])
                     # ✅ ДОБАВЛЕНО: Логируем каждую свечу для SHORT сигналов (для отладки)
-                    if signal_type == 'SHORT' and i < 20:  # Первые 20 свечей для детальной отладки
+                    from config import config
+                    debug_candles = config.BACKTEST_DEBUG_CANDLES
+                    if signal_type == 'SHORT' and i < debug_candles:  # ✅ Из config
                         logger.info(
                             f"SHORT candle {i+1}: high={high:.6f}, low={low:.6f}, "
                             f"entry={entry:.6f}, stop={stop:.6f}, "
@@ -418,14 +432,24 @@ class Backtester:
                     continue
 
                 if signal_type == 'LONG':
-                    # ✅ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Последовательная проверка TP с отслеживанием прогресса
+                    # ✅ НОВАЯ ЛОГИКА: Сначала SL, потом TP, приоритет последнего достигнутого TP
                     # 1. Сначала проверяем SL на каждой свече
-                    # 2. Потом проверяем, какой самый дальний TP достигнут
-                    # 3. Продолжаем проверять следующие TP после достижения предыдущего
-                    # 4. Останавливаемся только когда достигнут TP3 или SL
+                    # 2. Если SL достигнут И был достигнут TP - возвращаем последний достигнутый TP
+                    # 3. Если SL достигнут И TP не был достигнут - возвращаем SL
+                    # 4. Если SL не достигнут, проверяем TP последовательно
+                    # 5. Если TP3 достигнут - сразу возвращаем TP3 (финальный)
                     
                     # ✅ ШАГ 1: Проверяем SL ПЕРВЫМ на каждой свече
                     if low <= stop:
+                        # Если был достигнут какой-то TP ранее - возвращаем последний достигнутый TP
+                        if best_tp_hit:
+                            logger.info(
+                                f"LONG: ❌ SL hit on candle {i+1}/{candles_to_check} "
+                                f"(low={low:.6f}, stop={stop:.6f}), "
+                                f"but {best_tp_hit} was reached earlier - returning {best_tp_hit}"
+                            )
+                            return best_tp_hit, best_tp_price
+                        # Если TP не был достигнут - возвращаем SL
                         logger.info(
                             f"LONG: ❌ SL hit on candle {i+1}/{candles_to_check} "
                             f"(low={low:.6f}, stop={stop:.6f})"
@@ -446,10 +470,9 @@ class Backtester:
                             f"(high={high:.6f}, tp2={tp2:.6f}, diff={high-tp2:.6f})"
                         )
                         # Обновляем лучший достигнутый TP
-                        if best_tp_hit != 'TP3_HIT':
-                            best_tp_hit = 'TP2_HIT'
-                            best_tp_price = tp2
-                        # Продолжаем искать TP3
+                        best_tp_hit = 'TP2_HIT'
+                        best_tp_price = tp2
+                        # Продолжаем искать TP3 на следующих свечах
                     elif tp1 > 0 and high >= tp1:
                         logger.info(
                             f"LONG: ✅ TP1 HIT on candle {i+1}/{candles_to_check} "
@@ -459,19 +482,29 @@ class Backtester:
                         if best_tp_hit is None or best_tp_hit == 'TP1_HIT':
                             best_tp_hit = 'TP1_HIT'
                             best_tp_price = tp1
-                        # Продолжаем искать TP2 и TP3
+                        # Продолжаем искать TP2 и TP3 на следующих свечах
                     
                     # Продолжаем проверять следующие свечи для поиска более дальних TP
 
                 elif signal_type == 'SHORT':
-                    # ✅ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Последовательная проверка TP с отслеживанием прогресса
+                    # ✅ НОВАЯ ЛОГИКА: Сначала SL, потом TP, приоритет последнего достигнутого TP
                     # 1. Сначала проверяем SL на каждой свече
-                    # 2. Потом проверяем, какой самый дальний TP достигнут
-                    # 3. Продолжаем проверять следующие TP после достижения предыдущего
-                    # 4. Останавливаемся только когда достигнут TP3 или SL
+                    # 2. Если SL достигнут И был достигнут TP - возвращаем последний достигнутый TP
+                    # 3. Если SL достигнут И TP не был достигнут - возвращаем SL
+                    # 4. Если SL не достигнут, проверяем TP последовательно
+                    # 5. Если TP3 достигнут - сразу возвращаем TP3 (финальный)
                     
                     # ✅ ШАГ 1: Проверяем SL ПЕРВЫМ на каждой свече
                     if high >= stop:
+                        # Если был достигнут какой-то TP ранее - возвращаем последний достигнутый TP
+                        if best_tp_hit:
+                            logger.info(
+                                f"SHORT: ❌ SL hit on candle {i+1}/{candles_to_check} "
+                                f"(high={high:.6f}, stop={stop:.6f}), "
+                                f"but {best_tp_hit} was reached earlier - returning {best_tp_hit}"
+                            )
+                            return best_tp_hit, best_tp_price
+                        # Если TP не был достигнут - возвращаем SL
                         logger.info(
                             f"SHORT: ❌ SL hit on candle {i+1}/{candles_to_check} "
                             f"(high={high:.6f}, stop={stop:.6f})"
@@ -479,7 +512,6 @@ class Backtester:
                         return 'SL_HIT', stop
 
                     # ✅ ШАГ 2: Проверяем TP последовательно (от дальнего к ближнему)
-                    # Отслеживаем, какой самый дальний TP достигнут на этой свече
                     if tp3 > 0 and low <= tp3:
                         logger.info(
                             f"SHORT: ✅ TP3 HIT on candle {i+1}/{candles_to_check} "
@@ -492,10 +524,9 @@ class Backtester:
                             f"SHORT: ✅ TP2 HIT on candle {i+1}/{candles_to_check} "
                             f"(low={low:.6f}, tp2={tp2:.6f}, diff={tp2-low:.6f})"
                         )
-                        # Обновляем лучший достигнутый TP (TP2 лучше чем TP1)
-                        if best_tp_hit != 'TP3_HIT':  # На всякий случай (хотя TP3 сразу возвращается)
-                            best_tp_hit = 'TP2_HIT'
-                            best_tp_price = tp2
+                        # Обновляем лучший достигнутый TP
+                        best_tp_hit = 'TP2_HIT'
+                        best_tp_price = tp2
                         # Продолжаем искать TP3 на следующих свечах
                     elif tp1 > 0 and low <= tp1:
                         logger.info(
@@ -523,9 +554,26 @@ class Backtester:
                     )
                     return best_tp_hit, best_tp_price
                 
-                # Если TP не достигнут, возвращаем SL
+                # ✅ НОВОЕ: Если ни TP, ни SL не достигнуты - сигнал активен
+                # Проверяем, был ли достигнут SL в последней свече
+                sl_reached = False
+                if signal_type == 'LONG':
+                    sl_reached = last_candle_low <= stop
+                elif signal_type == 'SHORT':
+                    sl_reached = last_candle_high >= stop
+                
+                if not sl_reached:
+                    logger.info(
+                        f"{signal_type}: ⏳ Signal is ACTIVE - neither TP nor SL reached within {candles_to_check} candles. "
+                        f"Last candle: high={last_candle_high:.4f}, low={last_candle_low:.4f}, "
+                        f"entry={entry:.4f}, stop={stop:.4f}, tp1={tp1:.4f}"
+                    )
+                    # Возвращаем ACTIVE с текущей ценой (entry, так как позиция еще открыта)
+                    return 'ACTIVE', entry
+                
+                # Если SL был достигнут в последней свече, возвращаем SL
                 logger.warning(
-                    f"{signal_type}: No TP reached within {candles_to_check} candles. "
+                    f"{signal_type}: ❌ SL reached (no TP reached) within {candles_to_check} candles. "
                     f"Last candle: high={last_candle_high:.4f}, low={last_candle_low:.4f}, "
                     f"entry={entry:.4f}, stop={stop:.4f}, tp1={tp1:.4f}, tp2={tp2:.4f}, tp3={tp3:.4f}"
                 )
@@ -552,58 +600,63 @@ class Backtester:
         """
         ✅ FALLBACK: Оценка outcome на основе качественного scoring
         """
+        from config import config
+        
         quality_score = 0
 
-        # 1. Confidence (макс 35 баллов)
-        quality_score += min(35, max(0, (confidence - 50) * 0.7))
+        # 1. Confidence (макс из config)
+        conf_max = config.BACKTEST_QUALITY_CONFIDENCE_MAX
+        conf_base = config.BACKTEST_QUALITY_CONFIDENCE_BASE
+        conf_mult = config.BACKTEST_QUALITY_CONFIDENCE_MULTIPLIER
+        quality_score += min(conf_max, max(0, (confidence - conf_base) * conf_mult))
 
-        # 2. R/R ratio (макс 25 баллов)
-        if rr_ratio >= 3.0:
-            quality_score += 25
-        elif rr_ratio >= 2.5:
-            quality_score += 20
-        elif rr_ratio >= 2.0:
-            quality_score += 15
-        elif rr_ratio >= 1.5:
-            quality_score += 10
+        # 2. R/R ratio (макс 25 баллов) - из config
+        if rr_ratio >= config.BACKTEST_QUALITY_RR_3_0_THRESHOLD:
+            quality_score += config.BACKTEST_QUALITY_RR_3_0_SCORE
+        elif rr_ratio >= config.BACKTEST_QUALITY_RR_2_5_THRESHOLD:
+            quality_score += config.BACKTEST_QUALITY_RR_2_5_SCORE
+        elif rr_ratio >= config.BACKTEST_QUALITY_RR_2_0_THRESHOLD:
+            quality_score += config.BACKTEST_QUALITY_RR_2_0_SCORE
+        elif rr_ratio >= config.BACKTEST_QUALITY_RR_1_5_THRESHOLD:
+            quality_score += config.BACKTEST_QUALITY_RR_1_5_SCORE
 
-        # 3. SMC данные (макс 20 баллов)
+        # 3. SMC данные (макс из config)
         ob_score = self._score_order_blocks(comprehensive_data)
         imb_score = self._score_imbalances(comprehensive_data)
         sweep_score = self._score_sweeps(comprehensive_data)
         quality_score += ob_score + imb_score + sweep_score
 
-        # 4. Market Data (макс 10 баллов)
+        # 4. Market Data (макс из config)
         market_data = comprehensive_data.get('market_data', {})
         if isinstance(market_data, dict):
             funding_rate = abs(market_data.get('funding_rate', 0))
-            if funding_rate < 0.01:
-                quality_score += 3
+            if funding_rate < config.BACKTEST_QUALITY_FUNDING_RATE_THRESHOLD:
+                quality_score += config.BACKTEST_QUALITY_FUNDING_RATE_SCORE
 
             oi_change = market_data.get('oi_change_24h', 0)
             if signal_type == 'LONG' and oi_change > 0:
-                quality_score += 4
+                quality_score += config.BACKTEST_QUALITY_OI_CHANGE_SCORE
             elif signal_type == 'SHORT' and oi_change < 0:
-                quality_score += 4
+                quality_score += config.BACKTEST_QUALITY_OI_CHANGE_SCORE
 
             spread = market_data.get('spread_pct', 0)
-            if spread < 0.10:
-                quality_score += 3
+            if spread < config.BACKTEST_QUALITY_SPREAD_THRESHOLD:
+                quality_score += config.BACKTEST_QUALITY_SPREAD_SCORE
 
-        # 5. Indicators (макс 10 баллов)
+        # 5. Indicators (макс из config)
         indicators = comprehensive_data.get('indicators_4h', {})
         if isinstance(indicators, dict):
             current = indicators.get('current', {})
             if isinstance(current, dict):
                 rsi = current.get('rsi', 50)
-                if signal_type == 'LONG' and 40 <= rsi <= 70:
-                    quality_score += 5
-                elif signal_type == 'SHORT' and 30 <= rsi <= 60:
-                    quality_score += 5
+                if signal_type == 'LONG' and config.BACKTEST_QUALITY_RSI_LONG_MIN <= rsi <= config.BACKTEST_QUALITY_RSI_LONG_MAX:
+                    quality_score += config.BACKTEST_QUALITY_RSI_SCORE
+                elif signal_type == 'SHORT' and config.BACKTEST_QUALITY_RSI_SHORT_MIN <= rsi <= config.BACKTEST_QUALITY_RSI_SHORT_MAX:
+                    quality_score += config.BACKTEST_QUALITY_RSI_SCORE
 
                 volume_ratio = current.get('volume_ratio', 1.0)
-                if volume_ratio > 1.5:
-                    quality_score += 5
+                if volume_ratio > config.BACKTEST_QUALITY_VOLUME_RATIO_THRESHOLD:
+                    quality_score += config.BACKTEST_QUALITY_VOLUME_RATIO_SCORE
 
         # Нормализуем
         quality_score = max(0, min(100, quality_score))
@@ -616,14 +669,14 @@ class Backtester:
         if len(tp_levels) < 3:
             tp_levels = tp_levels + [0] * (3 - len(tp_levels))
 
-        # Outcome на основе score
-        if quality_score >= 85:
+        # Outcome на основе score (из config)
+        if quality_score >= config.BACKTEST_QUALITY_TP3_THRESHOLD:
             return 'TP3_HIT', tp_levels[2]
-        elif quality_score >= 70:
+        elif quality_score >= config.BACKTEST_QUALITY_TP2_THRESHOLD:
             return 'TP2_HIT', tp_levels[1]
-        elif quality_score >= 55:
+        elif quality_score >= config.BACKTEST_QUALITY_TP1_THRESHOLD:
             return 'TP1_HIT', tp_levels[0]
-        elif quality_score >= 40:
+        elif quality_score >= config.BACKTEST_QUALITY_MIN_THRESHOLD:
             # Вероятностная оценка
             decision_hash = hash(f"{entry}{stop}{confidence}") % 10
             if decision_hash >= 5:
@@ -650,17 +703,20 @@ class Backtester:
             else:
                 score += 4
 
+            from config import config
             distance = nearest_ob.get('distance_pct', 100)
-            if distance < 2.0:
+            distance_threshold = config.BACKTEST_QUALITY_OB_DISTANCE_THRESHOLD
+            if distance < distance_threshold:
                 score += 5
-            elif distance < 5.0:
+            elif distance < distance_threshold * 2.5:  # 5.0 для дефолта
                 score += 2
 
             age = nearest_ob.get('age_in_candles', 100)
-            if age <= 10:
+            age_fresh = config.BACKTEST_QUALITY_OB_AGE_FRESH
+            if age <= age_fresh:
                 score += 2
 
-            return min(10, score)
+            return min(config.BACKTEST_QUALITY_OB_MAX_SCORE, score)
         except:
             return 0
 
@@ -675,12 +731,14 @@ class Backtester:
             if not nearest_imb or not isinstance(nearest_imb, dict):
                 return 0
 
+            from config import config
             score = 0
             if not nearest_imb.get('is_filled', True):
                 score += 5
             else:
                 fill_pct = nearest_imb.get('fill_percentage', 100)
-                if fill_pct < 50:
+                fill_threshold = config.BACKTEST_QUALITY_IMB_FILL_THRESHOLD
+                if fill_pct < fill_threshold:
                     score += 3
 
             return min(5, score)
@@ -709,26 +767,39 @@ class Backtester:
 
     def _calculate_metrics(self, results: List[Dict], stats: Dict) -> Dict:
         """Рассчитать метрики"""
-        total = stats['total_signals']
-        if total == 0:
-            return {}
+        total_signals = stats['total_signals']
+        active_signals = stats.get('active_signals', 0)
+        
+        # ✅ Исключаем активные сигналы из расчета метрик (только закрытые позиции)
+        total_closed = total_signals - active_signals
+        
+        if total_closed == 0:
+            return {
+                'total_signals': total_signals,
+                'active_signals': active_signals,
+                'closed_signals': 0
+            }
 
-        tp1_rate = (stats.get('tp1_hits', 0) / total) * 100
-        tp2_rate = (stats.get('tp2_hits', 0) / total) * 100
-        tp3_rate = (stats.get('tp3_hits', 0) / total) * 100
-        sl_rate = (stats.get('sl_hits', 0) / total) * 100
+        tp1_rate = (stats.get('tp1_hits', 0) / total_closed) * 100
+        tp2_rate = (stats.get('tp2_hits', 0) / total_closed) * 100
+        tp3_rate = (stats.get('tp3_hits', 0) / total_closed) * 100
+        sl_rate = (stats.get('sl_hits', 0) / total_closed) * 100
 
         winning_trades = (
             stats.get('tp1_hits', 0) +
             stats.get('tp2_hits', 0) +
             stats.get('tp3_hits', 0)
         )
-        win_rate = (winning_trades / total) * 100
-        avg_pnl = stats['total_pnl'] / total
+        win_rate = (winning_trades / total_closed) * 100 if total_closed > 0 else 0
+        avg_pnl = stats['total_pnl'] / total_closed if total_closed > 0 else 0
 
-        # По символам
+        # По символам (только закрытые позиции)
         symbol_stats = defaultdict(lambda: {'count': 0, 'wins': 0, 'pnl': 0})
         for result in results:
+            # ✅ Пропускаем активные сигналы в статистике по символам
+            if result.get('outcome') == 'ACTIVE':
+                continue
+                
             symbol = result['symbol']
             symbol_stats[symbol]['count'] += 1
 
@@ -744,7 +815,9 @@ class Backtester:
         )[:5]
 
         return {
-            'total_signals': total,
+            'total_signals': total_signals,
+            'active_signals': active_signals,
+            'closed_signals': total_closed,
             'long_signals': stats.get('signal_LONG', 0),
             'short_signals': stats.get('signal_SHORT', 0),
             'win_rate': round(win_rate, 2),
@@ -808,21 +881,28 @@ def format_backtest_report(backtest_result: Dict) -> str:
 
     metrics = backtest_result.get('metrics', {})
 
+    active_signals = metrics.get('active_signals', 0)
+    closed_signals = metrics.get('closed_signals', metrics.get('total_signals', 0) - active_signals)
+    
     report = [
         "📊 <b>BACKTEST RESULTS</b>",
         "━━━━━━━━━━━━━━━━━━━━━━\n",
         f"<b>📈 MAIN METRICS:</b>",
-        f"  • Signals: {metrics.get('total_signals', 0)}",
+        f"  • Total Signals: {metrics.get('total_signals', 0)}",
+        f"  • ⏳ Active: {active_signals} | ✅ Closed: {closed_signals}",
         f"  • LONG: {metrics.get('long_signals', 0)} | SHORT: {metrics.get('short_signals', 0)}",
-        f"  • Win Rate: <b>{metrics.get('win_rate', 0)}%</b>",
-        f"  • Avg PnL: <b>{metrics.get('avg_pnl_pct', 0):+.2f}%</b>",
+        f"  • Win Rate: <b>{metrics.get('win_rate', 0)}%</b> (of closed)",
+        f"  • Avg PnL: <b>{metrics.get('avg_pnl_pct', 0):+.2f}%</b> (of closed)",
         f"  • Total PnL: <b>{metrics.get('total_pnl_pct', 0):+.2f}%</b>\n",
-        f"<b>🎯 HIT RATES:</b>",
+        f"<b>🎯 HIT RATES (of closed):</b>",
         f"  • TP1: {metrics.get('tp1_hit_rate', 0)}%",
         f"  • TP2: {metrics.get('tp2_hit_rate', 0)}%",
         f"  • TP3: {metrics.get('tp3_hit_rate', 0)}%",
         f"  • SL: {metrics.get('sl_hit_rate', 0)}%"
     ]
+    
+    if active_signals > 0:
+        report.append(f"\n⏳ <b>ACTIVE SIGNALS:</b> {active_signals} (not included in statistics)")
 
     top_symbols = metrics.get('top_symbols', [])
     if top_symbols:

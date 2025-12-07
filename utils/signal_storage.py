@@ -174,8 +174,13 @@ class SignalStorage:
             with open(signal_file, 'r', encoding='utf-8') as f:
                 signal_data = json.load(f)
 
-            # Определяем статус: FINAL только для TP3_HIT или SL_HIT
-            if outcome in ['TP3_HIT', 'SL_HIT']:
+            # Определяем статус:
+            # - FINAL: TP3_HIT или SL_HIT (финальный исход)
+            # - CHECKED: TP1_HIT или TP2_HIT (может измениться на TP3)
+            # - ACTIVE: сигнал еще активен (не достиг ни TP, ни SL)
+            if outcome == 'ACTIVE':
+                backtest_status = 'ACTIVE'  # ✅ Сигнал активен, нужно перепроверить позже
+            elif outcome in ['TP3_HIT', 'SL_HIT']:
                 backtest_status = 'FINAL'
             else:
                 backtest_status = 'CHECKED'  # TP1 или TP2 - еще может измениться

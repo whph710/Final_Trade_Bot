@@ -18,11 +18,6 @@ logger = logging.getLogger(__name__)
 _session: Optional[aiohttp.ClientSession] = None
 _semaphore: Optional[asyncio.Semaphore] = None
 
-# Настройки
-MAX_CONCURRENT_REQUESTS = 50
-REQUEST_TIMEOUT = 15
-CONNECT_TIMEOUT = 5
-
 
 async def get_session() -> aiohttp.ClientSession:
     """
@@ -32,13 +27,21 @@ async def get_session() -> aiohttp.ClientSession:
         Настроенная aiohttp.ClientSession
     """
     global _session, _semaphore
+    
+    # ✅ Загружаем настройки из config
+    from config import config
+    max_concurrent = config.BYBIT_MAX_CONCURRENT_REQUESTS
+    request_timeout = config.BYBIT_REQUEST_TIMEOUT
+    connect_timeout = config.BYBIT_CONNECT_TIMEOUT
+    limit_per_host = config.BYBIT_LIMIT_PER_HOST
+    keepalive_timeout = config.BYBIT_KEEPALIVE_TIMEOUT
 
     if _session is None or _session.closed:
-        timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT, connect=CONNECT_TIMEOUT)
+        timeout = aiohttp.ClientTimeout(total=request_timeout, connect=connect_timeout)
         connector = aiohttp.TCPConnector(
-            limit=MAX_CONCURRENT_REQUESTS,
-            limit_per_host=25,
-            keepalive_timeout=120,
+            limit=max_concurrent,
+            limit_per_host=limit_per_host,
+            keepalive_timeout=keepalive_timeout,
             enable_cleanup_closed=True
         )
 
@@ -48,7 +51,7 @@ async def get_session() -> aiohttp.ClientSession:
             headers={'User-Agent': 'TradingBot/6.0'}
         )
 
-        _semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+        _semaphore = asyncio.Semaphore(max_concurrent)
         logger.debug("Created new aiohttp session with connection pooling")
 
     return _session
@@ -57,7 +60,7 @@ async def get_session() -> aiohttp.ClientSession:
 async def fetch_candles(
         symbol: str,
         interval: str,
-        limit: int = 200,
+        limit: Optional[int] = None,
         start_time: Optional[int] = None
 ) -> List[List]:
     """
@@ -66,13 +69,18 @@ async def fetch_candles(
     Args:
         symbol: Торговая пара (например, 'BTCUSDT')
         interval: Интервал ('60' = 1H, '240' = 4H, 'D' = 1D)
-        limit: Количество свечей (макс 1000)
+        limit: Количество свечей (макс 1000). Если None, используется значение из config
         start_time: Начальный timestamp в миллисекундах (опционально)
 
     Returns:
         Список свечей в формате Bybit [timestamp, open, high, low, close, volume, turnover]
         Пустой список при ошибке
     """
+    # ✅ Используем значение из config если limit не указан
+    if limit is None:
+        from config import config
+        limit = config.BYBIT_DEFAULT_CANDLES_LIMIT
+    
     session = await get_session()
 
     params = {
@@ -196,10 +204,14 @@ async def _fetch_single_request(req: Dict) -> Dict:
         {'symbol': str, 'klines': List, 'success': bool, 'timeframe': str (optional)}
     """
     try:
+        # ✅ Используем значение из config если limit не указан
+        from config import config
+        default_limit = req.get('limit', config.BYBIT_DEFAULT_CANDLES_LIMIT)
+        
         klines = await fetch_candles(
             req['symbol'],
             req.get('interval', '60'),
-            req.get('limit', 100)
+            limit=default_limit
         )
 
         result = {

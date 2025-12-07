@@ -9,7 +9,7 @@ Stage 1: Signal Filtering - LEVELS + ATR Strategy (FIXED DISTANCE CHECK)
 """
 
 import logging
-from typing import List
+from typing import List, Optional
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -31,8 +31,8 @@ class SignalCandidate:
 
 async def run_stage1(
         pairs: List[str],
-        min_confidence: int = 60,
-        min_volume_ratio: float = 1.0
+        min_confidence: Optional[int] = None,
+        min_volume_ratio: Optional[float] = None
 ) -> List[SignalCandidate]:
     """
     Stage 1: Фильтрация пар по стратегии Уровни + ATR
@@ -50,6 +50,12 @@ async def run_stage1(
     from config import config
     import time
 
+    # ✅ Используем значения из config если не указаны
+    if min_confidence is None:
+        min_confidence = config.MIN_CONFIDENCE
+    if min_volume_ratio is None:
+        min_volume_ratio = config.MIN_VOLUME_RATIO
+
     if not pairs:
         logger.warning("Stage 1: No pairs provided")
         return []
@@ -58,8 +64,10 @@ async def run_stage1(
     start_time = time.time()
 
     # Batch loading 4H candles
+    # ✅ Используем настройку из config
+    candles_limit = config.QUICK_SCAN_CANDLES
     requests = [
-        {'symbol': symbol, 'interval': config.TIMEFRAME_LONG, 'limit': 100}
+        {'symbol': symbol, 'interval': config.TIMEFRAME_LONG, 'limit': candles_limit}
         for symbol in pairs
     ]
     batch_results = await fetch_multiple_candles(requests)
