@@ -54,6 +54,11 @@ from .volume_profile import (
     VolumeProfileAnalysis
 )
 
+# ✅ НОВОЕ: News Analysis
+from .news_analysis import (
+    analyze_news
+)
+
 # ✅ НОВОЕ: Support/Resistance Levels
 from .support_resistance import (
     find_support_resistance_levels,
@@ -110,4 +115,7 @@ __all__ = [
     'analyze_support_resistance',
     'SupportResistanceLevel',
     'SupportResistanceAnalysis',
+    
+    # ✅ НОВОЕ: News Analysis
+    'analyze_news',
 ]

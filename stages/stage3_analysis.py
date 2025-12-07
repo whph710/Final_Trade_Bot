@@ -137,6 +137,9 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
             # SMC ДАННЫЕ
             smc_data_full = await _analyze_smc_with_history(candles_1h, candles_4h, current_price)
 
+            # ✅ НОВОЕ: Анализ новостей
+            news_data = await _analyze_news_for_symbol(symbol)
+
             # ✅ ВАЖНО: Для S/R уровней делаем ПРОСТУЮ проверку расстояния
             # (не пересчитываем уровни заново)
             sr_validation = await _validate_sr_distance_simple(candles_4h, current_price)
@@ -173,7 +176,10 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 'sweep_history': smc_data_full['sweep_history'],
                 'btc_candles_1h': btc_candles_1h_raw[-100:],
                 'btc_candles_4h': btc_candles_4h_raw[-100:],
-                'btc_indicators': _calculate_ultra_full_indicators(btc_candles_4h, "BTC_4H")
+                'btc_indicators': _calculate_ultra_full_indicators(btc_candles_4h, "BTC_4H"),
+                
+                # ✅ НОВОЕ: Данные новостей
+                'news_data': news_data
             }
 
             logger.debug(
@@ -269,6 +275,45 @@ async def _validate_sr_distance_simple(candles, current_price) -> Dict:
             'distance_to_low_pct': 999,
             'near_high': False,
             'near_low': False
+        }
+
+# ============================================================================
+# НОВОСТНОЙ АНАЛИЗ
+# ============================================================================
+
+async def _analyze_news_for_symbol(symbol: str) -> Dict:
+    """
+    Анализ новостей для символа
+    
+    Args:
+        symbol: Торговая пара (например, 'BTCUSDT')
+    
+    Returns:
+        Dict с данными новостей
+    """
+    try:
+        logger.info(f"Stage 3: Starting news analysis for {symbol}")
+        from indicators.news_analysis import analyze_news
+        news_data = await analyze_news(symbol)
+        
+        if news_data.get('news_found'):
+            logger.info(
+                f"Stage 3: News analysis complete for {symbol}: "
+                f"found={news_data.get('news_found')}, "
+                f"entities={len(news_data.get('related_entities', []))}, "
+                f"summary_length={len(news_data.get('news_summary', ''))}"
+            )
+        else:
+            logger.info(f"Stage 3: No news found for {symbol}")
+        
+        return news_data
+    except Exception as e:
+        logger.warning(f"News analysis failed for {symbol}: {e}", exc_info=True)
+        return {
+            'news_summary': '',
+            'news_found': False,
+            'related_entities': [],
+            'timestamp': datetime.now().isoformat()
         }
 
 # ============================================================================
@@ -590,6 +635,9 @@ async def analyze_single_pair(symbol: str, direction: str) -> Optional[TradingSi
         # ✅ Упрощённая проверка S/R
         sr_validation = await _validate_sr_distance_simple(candles_4h, current_price)
 
+        # ✅ НОВОЕ: Анализ новостей для ручного анализа
+        news_data = await _analyze_news_for_symbol(symbol)
+
         comprehensive_data = {
             'symbol': symbol,
             'candles_1h': candles_1h_raw[-100:],
@@ -619,7 +667,10 @@ async def analyze_single_pair(symbol: str, direction: str) -> Optional[TradingSi
             'btc_candles_1h': btc_candles_1h_raw[-100:],
             'btc_candles_4h': btc_candles_4h_raw[-100:],
             'btc_indicators': _calculate_ultra_full_indicators(btc_candles_4h, "BTC_4H"),
-            'forced_direction': direction
+            'forced_direction': direction,
+            
+            # ✅ НОВОЕ: Данные новостей
+            'news_data': news_data
         }
 
         logger.info(f"{symbol} - Running AI analysis (forced: {direction})")

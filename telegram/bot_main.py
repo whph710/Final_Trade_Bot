@@ -85,6 +85,10 @@ class TradingBotTelegram:
         from config import config
         self.stats_file = config.LOGS_DIR / 'bot_statistics.json'
 
+        # ✅ Инициализация scheduler
+        from telegram.scheduler import ScheduleManager
+        self.scheduler = ScheduleManager()
+
         self._register_handlers()
 
         logger.info(
@@ -722,6 +726,30 @@ class TradingBotTelegram:
         except Exception as e:
             logger.error(f"Error sending signals to group: {e}")
 
+    async def _send_approved_signals(self, approved_signals: list, user_id: int):
+        """Отправить одобренные сигналы конкретному пользователю"""
+        from telegram.formatters import format_signal_for_telegram
+
+        if not approved_signals:
+            return
+
+        try:
+            for signal in approved_signals:
+                formatted_text = format_signal_for_telegram(signal)
+
+                await self.bot.send_message(
+                    chat_id=user_id,
+                    text=formatted_text,
+                    parse_mode="HTML"
+                )
+
+                await asyncio.sleep(0.5)
+
+            logger.info(f"Sent {len(approved_signals)} approved signals to user {user_id}")
+
+        except Exception as e:
+            logger.error(f"Error sending approved signals to user {user_id}: {e}")
+
     async def _send_rejected_signals(self, rejected_signals: list, user_id: int):
         """Отправить rejected signals конкретному пользователю"""
         if not rejected_signals:
@@ -1348,6 +1376,10 @@ class TradingBotTelegram:
         except Exception as e:
             logger.warning(f"Error clearing pending updates: {e}")
 
+        # ✅ Запускаем scheduler
+        self.scheduler.setup_schedule(self, self._run_scheduled_analysis)
+        logger.info("Scheduler started successfully")
+
         try:
             await self.dp.start_polling(
                 self.bot,
@@ -1364,6 +1396,109 @@ class TradingBotTelegram:
                 logger.info("Session cleaned up on bot shutdown")
             except Exception as e:
                 logger.debug(f"Cleanup on shutdown: {e}")
+
+    async def _run_scheduled_analysis(self, bot):
+        """
+        Callback функция для scheduler - запускает полный цикл анализа
+        
+        Args:
+            bot: TradingBotTelegram объект (self)
+        """
+        if self.trading_bot_running:
+            logger.warning("Trading bot is already running, skipping scheduled run")
+            return
+
+        try:
+            self.trading_bot_running = True
+            logger.info("=" * 70)
+            logger.info("SCHEDULED RUN: Starting full trading cycle")
+            logger.info("=" * 70)
+
+            # Отправляем уведомление пользователям
+            for user_id in self.user_ids:
+                try:
+                    await self.bot.send_message(
+                        chat_id=user_id,
+                        text="⏳ <b>Автоматический запуск анализа...</b>",
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.debug(f"Error sending notification to {user_id}: {e}")
+
+            # Запускаем полный цикл
+            await self._run_full_trading_cycle()
+
+        except Exception as e:
+            logger.error(f"Error in scheduled analysis: {e}", exc_info=True)
+            
+            # Отправляем ошибку пользователям
+            for user_id in self.user_ids:
+                try:
+                    await self.bot.send_message(
+                        chat_id=user_id,
+                        text=f"❌ <b>Ошибка при автоматическом запуске:</b>\n\n<code>{str(e)}</code>",
+                        parse_mode="HTML"
+                    )
+                except:
+                    pass
+        finally:
+            self.trading_bot_running = False
+
+    async def _run_full_trading_cycle(self):
+        """Запуск полного цикла анализа (без отправки сообщений пользователю)"""
+        from stages import run_stage1, run_stage2, run_stage3
+        from data_providers import get_all_trading_pairs, cleanup_session
+
+        try:
+            logger.info("Scheduled run: Starting Stage 1")
+            pairs = await get_all_trading_pairs()
+            candidates = await run_stage1(pairs)
+
+            if not candidates:
+                logger.warning("Scheduled run: Stage 1 - No signals found")
+                await cleanup_session()
+                return
+
+            logger.info(f"Scheduled run: Stage 1 - Found {len(candidates)} signals")
+
+            logger.info("Scheduled run: Starting Stage 2")
+            selected_pairs = await run_stage2(candidates)
+
+            if not selected_pairs:
+                logger.warning("Scheduled run: Stage 2 - AI selected 0 pairs")
+                await cleanup_session()
+                return
+
+            logger.info(f"Scheduled run: Stage 2 - AI selected {len(selected_pairs)} pairs")
+
+            logger.info("Scheduled run: Starting Stage 3")
+            approved_signals, rejected_signals = await run_stage3(selected_pairs)
+
+            # Сохраняем сигналы
+            for signal in approved_signals:
+                self.signal_storage.save_signal(signal)
+
+            # Отправляем сигналы
+            if approved_signals:
+                await self._send_signals_to_group(approved_signals)
+                # Отправляем одобренные сигналы всем пользователям
+                for user_id in self.user_ids:
+                    await self._send_approved_signals(approved_signals, user_id)
+            
+            if rejected_signals:
+                # Отправляем отклонённые сигналы всем пользователям
+                for user_id in self.user_ids:
+                    await self._send_rejected_signals(rejected_signals, user_id)
+
+            await cleanup_session()
+
+            logger.info("=" * 70)
+            logger.info(f"SCHEDULED RUN COMPLETE: {len(approved_signals)} approved, {len(rejected_signals)} rejected")
+            logger.info("=" * 70)
+
+        except Exception as e:
+            logger.error(f"Error in full trading cycle: {e}", exc_info=True)
+            raise
 
 
 # ============================================================================

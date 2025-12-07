@@ -1,0 +1,237 @@
+"""
+News Analysis Module
+Файл: indicators/news_analysis.py
+
+Модуль для поиска и анализа новостей по активам с помощью ИИ
+"""
+
+import logging
+from typing import Dict, Optional
+from datetime import datetime, timedelta, timezone
+
+logger = logging.getLogger(__name__)
+
+
+async def analyze_news(symbol: str) -> Dict:
+    """
+    Поиск и анализ новостей по активу за последние 24 часа
+    
+    Args:
+        symbol: Тикер актива (например, 'BTCUSDT', 'TSLA', 'DOGEUSDT')
+    
+    Returns:
+        Dict с ключами:
+            - news_summary: str - Краткая сводка новостей
+            - news_found: bool - Найдены ли новости
+            - related_entities: List[str] - Связанные сущности (компании, личности)
+            - timestamp: str - Время анализа
+    """
+    from ai.ai_router import AIRouter
+    from ai.deepseek_client import load_prompt_cached
+    from config import config
+    
+    try:
+        logger.info(f"🔍 News analysis: Starting search for {symbol}")
+        
+        # Извлекаем базовый тикер (убираем USDT, USD и т.д.)
+        base_symbol = _extract_base_symbol(symbol)
+        logger.debug(f"News analysis: Base symbol extracted: {base_symbol} from {symbol}")
+        
+        # Загружаем промпт
+        try:
+            prompt_template = load_prompt_cached("prompt_news.txt")
+            logger.debug("News analysis: Prompt loaded successfully")
+        except FileNotFoundError:
+            logger.warning("News prompt not found, using fallback")
+            prompt_template = _get_fallback_prompt()
+        
+        # ✅ UTC время для промпта
+        now_utc = datetime.now(timezone.utc)
+        date_24h_ago_utc = (now_utc - timedelta(hours=24))
+        
+        # Формируем промпт с данными о символе и UTC временем
+        prompt = prompt_template.format(
+            symbol=base_symbol,
+            full_symbol=symbol,
+            date_24h_ago=date_24h_ago_utc.strftime('%Y-%m-%d %H:%M:%S UTC'),
+            current_time_utc=now_utc.strftime('%Y-%m-%d %H:%M:%S UTC')
+        )
+        
+        logger.info(f"News analysis: Prompt prepared for {symbol} (searching from {date_24h_ago_utc.strftime('%Y-%m-%d %H:%M UTC')} to {now_utc.strftime('%Y-%m-%d %H:%M UTC')})")
+        
+        # Получаем клиент ИИ (используем Stage 3 провайдер для новостей)
+        ai_router = AIRouter()
+        provider_name, client = await ai_router._get_provider_client('stage3')
+        
+        if not client:
+            logger.warning(f"News analysis: AI client unavailable for {symbol}")
+            return _get_empty_news_result()
+        
+        # Вызываем ИИ для поиска новостей
+        stage3_config = ai_router.stage_configs['stage3']
+        
+        try:
+            if provider_name == 'deepseek':
+                logger.info(f"🔍 News analysis: Calling DeepSeek API with web search enabled for {symbol}")
+                
+                # ✅ DeepSeek с веб-поиском
+                # DeepSeek автоматически использует веб-поиск если в промпте явно указано
+                # Используем явное указание в system message для активации веб-поиска
+                system_message = (
+                    "You are a financial news analyst with access to web search. "
+                    "You MUST search the internet for recent news about the given asset. "
+                    "Use your web search capabilities to find real-time information from the last 24 hours. "
+                    "Do NOT rely on your training data - actively search the web for current news."
+                )
+                
+                response = await client.client.chat.completions.create(
+                    model=client.model,
+                    messages=[
+                        {"role": "system", "content": system_message},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.7,
+                    max_tokens=1500
+                )
+                
+                news_text = response.choices[0].message.content.strip()
+                logger.info(f"✅ News analysis: DeepSeek response received for {symbol} ({len(news_text)} chars)")
+                
+            elif provider_name == 'claude':
+                # Claude использует свой API
+                news_text = await client.call(
+                    prompt=prompt,
+                    max_tokens=1500,
+                    temperature=0.7,
+                    timeout=60  # Увеличиваем timeout для поиска в интернете
+                )
+                news_text = news_text.strip() if news_text else ""
+            else:
+                logger.warning(f"News analysis: Unknown provider {provider_name}")
+                return _get_empty_news_result()
+        except Exception as e:
+            logger.error(f"News analysis: AI call failed for {symbol}: {e}")
+            return _get_empty_news_result()
+        
+        # Парсим результат
+        result = _parse_news_response(news_text, symbol)
+        
+        logger.info(
+            f"News analysis complete for {symbol}: "
+            f"found={result['news_found']}, "
+            f"summary_length={len(result.get('news_summary', ''))}"
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"News analysis error for {symbol}: {e}", exc_info=True)
+        return _get_empty_news_result()
+
+
+def _extract_base_symbol(symbol: str) -> str:
+    """
+    Извлечь базовый тикер из символа
+    
+    Примеры:
+        BTCUSDT -> BTC
+        ETHUSDT -> ETH
+        TSLA -> TSLA
+        DOGEUSDT -> DOGE
+    """
+    # Убираем суффиксы валютных пар
+    suffixes = ['USDT', 'USD', 'EUR', 'GBP', 'JPY', 'CNY', 'BUSD', 'USDC']
+    
+    for suffix in suffixes:
+        if symbol.endswith(suffix):
+            return symbol[:-len(suffix)]
+    
+    return symbol
+
+
+def _parse_news_response(response_text: str, symbol: str) -> Dict:
+    """
+    Парсить ответ ИИ и извлечь структурированные данные
+    
+    Args:
+        response_text: Текст ответа от ИИ
+        symbol: Символ актива
+    
+    Returns:
+        Dict с результатами анализа
+    """
+    if not response_text or len(response_text.strip()) < 50:
+        return _get_empty_news_result()
+    
+    # Извлекаем связанные сущности (если упомянуты)
+    related_entities = _extract_related_entities(response_text)
+    
+    # Проверяем, есть ли полезная информация
+    # Если ответ слишком короткий или содержит только "не найдено", возвращаем пустой результат
+    lower_text = response_text.lower()
+    if any(phrase in lower_text for phrase in [
+        'не найдено', 'not found', 'no news', 'нет новостей',
+        'не удалось найти', 'could not find'
+    ]) and len(response_text) < 100:
+        return _get_empty_news_result()
+    
+    return {
+        'news_summary': response_text.strip(),
+        'news_found': True,
+        'related_entities': related_entities,
+        'timestamp': datetime.now().isoformat(),
+        'symbol': symbol
+    }
+
+
+def _extract_related_entities(text: str) -> list:
+    """
+    Извлечь связанные сущности из текста новостей
+    
+    Ищет упоминания известных компаний, личностей, связанных с активом
+    """
+    # Список известных связанных сущностей
+    known_entities = [
+        'Elon Musk', 'SpaceX', 'Tesla', 'TSLA',
+        'Michael Saylor', 'MicroStrategy', 'MSTR',
+        'Grayscale', 'GBTC',
+        'BlackRock', 'IBIT',
+        'Coinbase', 'COIN',
+        'Binance', 'CZ',
+        'SEC', 'CFTC', 'FED', 'Federal Reserve',
+        'China', 'Chinese', 'Korea', 'South Korea',
+        'Bitcoin ETF', 'BTC ETF', 'Ethereum ETF', 'ETH ETF'
+    ]
+    
+    found_entities = []
+    text_lower = text.lower()
+    
+    for entity in known_entities:
+        if entity.lower() in text_lower:
+            found_entities.append(entity)
+    
+    return list(set(found_entities))  # Убираем дубликаты
+
+
+def _get_empty_news_result() -> Dict:
+    """Возвратить пустой результат анализа новостей"""
+    return {
+        'news_summary': '',
+        'news_found': False,
+        'related_entities': [],
+        'timestamp': datetime.now().isoformat()
+    }
+
+
+def _get_fallback_prompt() -> str:
+    """Fallback промпт если файл не найден"""
+    return """Найди в интернете все свежие новости за последние 24 часа касательно актива {symbol} ({full_symbol}).
+
+ВАЖНО:
+- Ищи новости, которые могут повлиять на цену актива
+- Учитывай косвенные связи (например, для DOGE - упоминания Elon Musk, для BTC - упоминания Tesla, SpaceX)
+- Сделай краткую сводку (2-4 предложения), сжато но не теряя сути
+- Если новостей нет, напиши "Новостей не найдено"
+
+Формат ответа: Только текст сводки, без дополнительных пояснений."""
+
