@@ -14,7 +14,9 @@ logger = logging.getLogger(__name__)
 
 async def analyze_news(symbol: str) -> Dict:
     """
-    Поиск и анализ новостей по активу за последние 24 часа
+    Поиск и анализ новостей по активу за последние 72 часа (3 дня)
+    
+    Для swing trading на 1H/4H таймфреймах требуется более широкий контекст новостей.
     
     Args:
         symbol: Тикер актива (например, 'BTCUSDT', 'TSLA', 'DOGEUSDT')
@@ -45,19 +47,20 @@ async def analyze_news(symbol: str) -> Dict:
             logger.warning("News prompt not found, using fallback")
             prompt_template = _get_fallback_prompt()
         
-        # ✅ UTC время для промпта
+        # ✅ UTC время для промпта (72 часа = 3 дня для swing trading на 1H/4H)
         now_utc = datetime.now(timezone.utc)
-        date_24h_ago_utc = (now_utc - timedelta(hours=24))
+        date_72h_ago_utc = (now_utc - timedelta(hours=72))
         
         # Формируем промпт с данными о символе и UTC временем
         prompt = prompt_template.format(
             symbol=base_symbol,
             full_symbol=symbol,
-            date_24h_ago=date_24h_ago_utc.strftime('%Y-%m-%d %H:%M:%S UTC'),
-            current_time_utc=now_utc.strftime('%Y-%m-%d %H:%M:%S UTC')
+            date_start=date_72h_ago_utc.strftime('%Y-%m-%d %H:%M:%S UTC'),
+            current_time_utc=now_utc.strftime('%Y-%m-%d %H:%M:%S UTC'),
+            hours_period=72
         )
         
-        logger.info(f"News analysis: Prompt prepared for {symbol} (searching from {date_24h_ago_utc.strftime('%Y-%m-%d %H:%M UTC')} to {now_utc.strftime('%Y-%m-%d %H:%M UTC')})")
+        logger.info(f"News analysis: Prompt prepared for {symbol} (searching from {date_72h_ago_utc.strftime('%Y-%m-%d %H:%M UTC')} to {now_utc.strftime('%Y-%m-%d %H:%M UTC')}, 72 hours)")
         
         # Получаем клиент ИИ (используем Stage 3 провайдер для новостей)
         ai_router = AIRouter()
@@ -79,9 +82,17 @@ async def analyze_news(symbol: str) -> Dict:
                 # Используем явное указание в system message для активации веб-поиска
                 system_message = (
                     "You are a financial news analyst with access to web search. "
-                    "You MUST search the internet for recent news about the given asset. "
-                    "Use your web search capabilities to find real-time information from the last 24 hours. "
-                    "Do NOT rely on your training data - actively search the web for current news."
+                    "You MUST perform DEEP, COMPREHENSIVE search of the internet for recent news about the given asset. "
+                    "Use your web search capabilities to find real-time information from the last 72 hours (3 days). "
+                    "CRITICAL: Search not only for direct news about the asset, but also for: "
+                    "1) News about correlated assets (that move together), "
+                    "2) News about inverse-correlated assets (that move opposite), "
+                    "3) Market-wide context and sentiment, "
+                    "4) Sector/industry trends that might affect the asset. "
+                    "This is for swing trading analysis, so focus on news that affects medium-term price movements. "
+                    "Do NOT rely on your training data - actively search the web for current news. "
+                    "Do NOT be superficial - perform deep analysis of how news affects the asset and related markets. "
+                    "Respond in English language as most financial news sources are in English."
                 )
                 
                 response = await client.client.chat.completions.create(
@@ -224,14 +235,14 @@ def _get_empty_news_result() -> Dict:
 
 
 def _get_fallback_prompt() -> str:
-    """Fallback промпт если файл не найден"""
-    return """Найди в интернете все свежие новости за последние 24 часа касательно актива {symbol} ({full_symbol}).
+    """Fallback prompt if file not found"""
+    return """Find all recent news from the last 72 hours (3 days) regarding asset {symbol} ({full_symbol}) on the internet.
 
-ВАЖНО:
-- Ищи новости, которые могут повлиять на цену актива
-- Учитывай косвенные связи (например, для DOGE - упоминания Elon Musk, для BTC - упоминания Tesla, SpaceX)
-- Сделай краткую сводку (2-4 предложения), сжато но не теряя сути
-- Если новостей нет, напиши "Новостей не найдено"
+IMPORTANT:
+- Search for news that may affect medium-term price movements (swing trading on 1H/4H)
+- Consider indirect connections (e.g., for DOGE - mentions of Elon Musk, for BTC - mentions of Tesla, SpaceX)
+- Provide a brief summary (2-4 sentences), concise but without losing the essence
+- If no news found, write "No news found"
 
-Формат ответа: Только текст сводки, без дополнительных пояснений."""
+Response format: Only summary text, without additional explanations. Use English language."""
 

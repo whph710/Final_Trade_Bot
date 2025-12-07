@@ -69,6 +69,15 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
         logger.error("Stage 3: BTC candles normalization failed")
         return [], []
 
+    # ✅ НОВОЕ: Загружаем новости BTC один раз для всех пар
+    # BTC новости важны для анализа корреляции
+    logger.info("Stage 3: Loading BTC news (will be used for correlation analysis)")
+    btc_news_data = await _analyze_news_for_symbol('BTCUSDT')
+    if btc_news_data.get('news_found'):
+        logger.info(f"Stage 3: BTC news loaded ({len(btc_news_data.get('news_summary', ''))} chars)")
+    else:
+        logger.info("Stage 3: No BTC news found")
+
     approved_signals = []
     rejected_signals = []
     ai_router = AIRouter()
@@ -179,7 +188,11 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 'btc_indicators': _calculate_ultra_full_indicators(btc_candles_4h, "BTC_4H"),
                 
                 # ✅ НОВОЕ: Данные новостей
-                'news_data': news_data
+                'news_data': news_data,
+                
+                # ✅ НОВОЕ: Новости BTC для анализа корреляции
+                # Важно: если корреляция высокая, новости BTC влияют на актив
+                'btc_news_data': btc_news_data
             }
 
             logger.debug(
@@ -588,6 +601,10 @@ async def analyze_single_pair(symbol: str, direction: str) -> Optional[TradingSi
         logger.debug(f"Loading BTC candles with extended history")
         btc_candles_1h_raw = await fetch_candles('BTCUSDT', config.TIMEFRAME_SHORT, 200)
         btc_candles_4h_raw = await fetch_candles('BTCUSDT', config.TIMEFRAME_LONG, 200)
+        
+        # ✅ НОВОЕ: Загружаем новости BTC для анализа корреляции
+        logger.info("Manual analysis: Loading BTC news for correlation analysis")
+        btc_news_data = await _analyze_news_for_symbol('BTCUSDT')
 
         if not btc_candles_1h_raw or not btc_candles_4h_raw:
             logger.error(f"Failed to load BTC candles")
@@ -670,7 +687,10 @@ async def analyze_single_pair(symbol: str, direction: str) -> Optional[TradingSi
             'forced_direction': direction,
             
             # ✅ НОВОЕ: Данные новостей
-            'news_data': news_data
+            'news_data': news_data,
+            
+            # ✅ НОВОЕ: Новости BTC для анализа корреляции
+            'btc_news_data': btc_news_data
         }
 
         logger.info(f"{symbol} - Running AI analysis (forced: {direction})")

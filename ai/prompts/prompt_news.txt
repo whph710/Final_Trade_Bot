@@ -1,106 +1,145 @@
 ═══════════════════════════════════════════════════════════════════
-ПОИСК НОВОСТЕЙ ПО АКТИВУ — АНАЛИЗ ЗА ПОСЛЕДНИЕ 24 ЧАСА
+NEWS SEARCH FOR ASSET — ANALYSIS FOR LAST 72 HOURS (3 DAYS)
 ═══════════════════════════════════════════════════════════════════
 
-ЗАДАЧА: Найти в интернете все свежие новости за последние 24 часа касательно актива {symbol} ({full_symbol}).
+TASK: Find all recent news from the last 72 hours (3 days) regarding asset {symbol} ({full_symbol}) on the internet.
 
-КРИТИЧНО: Реальные деньги. Новости должны влиять на цену.
+CRITICAL: Real money. Swing trading on 1H/4H timeframes. News should affect medium-term price movements.
 
 ═══════════════════════════════════════════════════════════════════
-АКТИВ ДЛЯ АНАЛИЗА
+ASSET FOR ANALYSIS
 ═══════════════════════════════════════════════════════════════════
 
-Символ: {symbol}
-Полный символ: {full_symbol}
-Период: Последние 24 часа
-  • С: {date_24h_ago}
-  • По: {current_time_utc}
+Symbol: {symbol}
+Full symbol: {full_symbol}
+Period: Last {hours_period} hours (3 days)
+  • From: {date_start}
+  • To: {current_time_utc}
   
-⚠️ ВАЖНО: Используй веб-поиск для поиска актуальных новостей в интернете!
+⚠️ IMPORTANT: Use web search to find current news on the internet!
+💡 For swing trading on 1H/4H, a broader context is needed - search for news from the last 3 days.
 
 ═══════════════════════════════════════════════════════════════════
-ТРЕБОВАНИЯ К ПОИСКУ
+SEARCH REQUIREMENTS
 ═══════════════════════════════════════════════════════════════════
 
-1. ПРЯМЫЕ НОВОСТИ:
-   - Новости напрямую связанные с активом
-   - Обновления протокола, форки, хардфорки
-   - Листинги/делистинги на биржах
-   - Регуляторные новости (SEC, CFTC, запреты, разрешения)
-   - Крупные транзакции, переводы, сжигания токенов
-   - Обновления от команды разработчиков
-   - Партнёрства, интеграции, принятие платежей
+1. DIRECT NEWS:
+   - News directly related to the asset
+   - Protocol updates, forks, hard forks
+   - Listings/delistings on exchanges
+   - Regulatory news (SEC, CFTC, bans, approvals)
+   - Large transactions, transfers, token burns
+   - Updates from development teams
+   - Partnerships, integrations, payment adoption
 
-2. КОСВЕННЫЕ СВЯЗИ (КРИТИЧНО УЧИТЫВАТЬ):
+2. INDIRECT CONNECTIONS (CRITICAL TO CONSIDER):
    
-   Для криптовалют:
+   For cryptocurrencies:
    - DOGE, DOGEUSDT → Elon Musk, Twitter/X, SpaceX, Tesla
    - BTC, BTCUSDT → Tesla, MicroStrategy, Michael Saylor, Grayscale, BlackRock, Bitcoin ETF
-   - ETH, ETHUSDT → Ethereum ETF, Vitalik Buterin, обновления сети
-   - SHIB, SHIBUSDT → Shiba Inu ecosystem, связанные проекты
+   - ETH, ETHUSDT → Ethereum ETF, Vitalik Buterin, network updates
+   - SHIB, SHIBUSDT → Shiba Inu ecosystem, related projects
    
-   Для акций:
-   - TSLA → Elon Musk, SpaceX, Twitter/X, автономное вождение
-   - AAPL → iPhone, Mac, сервисы, Китай, поставщики
-   - NVDA → AI, чипы, дата-центры, партнёрства
-   - MSTR → Bitcoin, Michael Saylor, BTC покупки
+   For stocks:
+   - TSLA → Elon Musk, SpaceX, Twitter/X, autonomous driving
+   - AAPL → iPhone, Mac, services, China, suppliers
+   - NVDA → AI, chips, data centers, partnerships
+   - MSTR → Bitcoin, Michael Saylor, BTC purchases
    
-   Для других активов:
-   - Ищи связанные компании, ключевых личностей, экосистему
-   - Регуляторные органы (SEC, FED, центральные банки)
-   - Крупные инвесторы, фонды, ETF
+   For other assets:
+   - Search for related companies, key personalities, ecosystem
+   - Regulatory bodies (SEC, FED, central banks)
+   - Large investors, funds, ETFs
 
-3. ВЛИЯНИЕ НА ЦЕНУ:
-   - Приоритет: новости с высоким потенциалом влияния на цену
-   - Игнорируй: мелкие обновления, технические детали без рыночного значения
-   - Фокус: макроэкономика, регуляция, крупные события
+3. CORRELATED ASSETS AND MARKETS (CRITICAL - DEEP ANALYSIS):
+   
+   ⚠️ IMPORTANT: Search for news about CORRELATED and INVERSE-CORRELATED assets!
+   
+   Direct Correlations (move together):
+   - For BTC: Search news about ETH, major altcoins, crypto market sentiment
+   - For ETH: Search news about BTC, DeFi tokens, Layer 2 solutions
+   - For altcoins: Search news about BTC (BTC dominance affects all alts)
+   - For TSLA: Search news about EV sector (RIVN, LCID, NIO), tech stocks (AAPL, NVDA)
+   - For NVDA: Search news about AI sector (AMD, INTC, MSFT), semiconductor industry
+   - For MSTR: Search news about BTC, crypto ETFs, institutional adoption
+   
+   Inverse Correlations (move opposite):
+   - For BTC: Search news about traditional markets (DXY, gold, bonds) - inverse correlation
+   - For crypto: Search news about USD strength, Fed policy, risk-off sentiment
+   - For growth stocks: Search news about value stocks, defensive sectors
+   - For tech stocks: Search news about energy, utilities (sector rotation)
+   
+   Market-Wide Connections:
+   - For any crypto: Search news about macro markets (S&P 500, NASDAQ, DXY, gold)
+   - For any stock: Search news about sector ETFs, industry trends, competitors
+   - For any asset: Search news about related commodities, currencies, bonds
+   
+   ⚠️ CRITICAL: If {symbol} moves up, search for news that might cause correlated assets to:
+   - Move up together (positive correlation)
+   - Move down (inverse correlation)
+   - This helps understand if the move is isolated or market-wide
 
-═══════════════════════════════════════════════════════════════════
-ФОРМАТ ОТВЕТА
-═══════════════════════════════════════════════════════════════════
-
-Сделай КРАТКУЮ СВОДКУ (2-4 предложения):
-- Сжато, но не теряя сути новости
-- Упоминай ключевые факты, влияющие на цену
-- Если новостей нет, напиши: "Новостей не найдено за последние 24 часа"
-
-ПРИМЕРЫ:
-
-✅ ХОРОШИЕ ОТВЕТЫ:
-
-"Elon Musk опубликовал твит о поддержке DOGE. Tesla объявила о принятии DOGE для покупки товаров. SpaceX запустила спутник с DOGE логотипом."
-
-"SEC одобрил заявку на Bitcoin ETF от BlackRock. MicroStrategy купила дополнительно 1000 BTC. Michael Saylor заявил о долгосрочной стратегии накопления."
-
-"Tesla отчиталась о рекордных продажах в Q4. Китай одобрил продажи Model Y. Запущена новая фабрика в Берлине."
-
-❌ ПЛОХИЕ ОТВЕТЫ:
-
-"Новости не найдено." (слишком коротко, не искал)
-
-"Elon Musk что-то сказал про крипту." (нет деталей)
-
-"Цена выросла на 5%." (это не новость, это результат)
-
-═══════════════════════════════════════════════════════════════════
-ВАЖНО
-═══════════════════════════════════════════════════════════════════
-
-- Используй ТОЛЬКО РУССКИЙ ЯЗЫК для ответа
-- Ищи в интернете реальные новости (используй веб-поиск)
-- Если новостей действительно нет, честно напиши об этом
-- Учитывай временную зону: ищи новости за последние 24 часа от текущего момента
-- Приоритет: новости с высоким потенциалом влияния на цену
+4. PRICE IMPACT AND MARKET CONTEXT:
+   - Priority: news with high potential to affect price
+   - Ignore: minor updates, technical details without market significance
+   - Focus: macroeconomics, regulation, major events
+   - ⚠️ DEEP ANALYSIS: Don't just find news - analyze HOW it affects the asset:
+     * Is this news isolated to {symbol} or affects the whole sector/market?
+     * Does this news create positive or negative sentiment for correlated assets?
+     * What is the broader market context? (bullish/bearish/neutral)
+     * Are there conflicting signals from related markets?
 
 ═══════════════════════════════════════════════════════════════════
-ФИНАЛЬНОЕ НАПОМИНАНИЕ
+RESPONSE FORMAT
 ═══════════════════════════════════════════════════════════════════
 
-1. Ищи в интернете реальные новости за последние 24 часа
-2. Учитывай косвенные связи (Elon Musk для DOGE, Tesla для BTC и т.д.)
-3. Фокус на новостях, влияющих на цену
-4. Краткая сводка: 2-4 предложения, сжато но информативно
-5. Если новостей нет, честно напиши об этом
+Provide a COMPREHENSIVE SUMMARY (3-6 sentences):
+- Include direct news about {symbol}
+- Include news about correlated/inverse-correlated assets that might affect {symbol}
+- Mention market-wide context and sentiment
+- Analyze how news might impact price (not just list events)
+- Concise, but comprehensive - don't miss important connections
+- If no news found, write: "No news found in the last 72 hours"
 
-Цель: Предоставить трейдеру актуальную информацию о факторах, влияющих на цену актива.
+EXAMPLES:
 
+✅ GOOD RESPONSES (comprehensive, with correlations):
+
+"Elon Musk posted a tweet supporting DOGE. Tesla announced DOGE acceptance for merchandise purchases. SpaceX launched a satellite with DOGE logo. Meanwhile, BTC showed strength above $70k, which typically supports altcoin sentiment. However, DXY (dollar index) rose, creating headwinds for crypto markets."
+
+"SEC approved BlackRock's Bitcoin ETF application. MicroStrategy purchased additional 1000 BTC. Michael Saylor announced long-term accumulation strategy. Institutional inflows into BTC ETFs reached record highs. ETH also gained on BTC strength, with Ethereum ETF approval rumors circulating."
+
+"Tesla reported record Q4 sales. China approved Model Y sales. New factory launched in Berlin. EV sector showed mixed signals - RIVN and LCID declined while TSLA gained. Tech sector (QQQ) was flat, suggesting TSLA move was company-specific rather than sector-wide."
+
+❌ BAD RESPONSES:
+
+"No news found." (too short, didn't search)
+
+"Elon Musk said something about crypto." (no details)
+
+"Price rose 5%." (this is not news, this is a result)
+
+═══════════════════════════════════════════════════════════════════
+IMPORTANT
+═══════════════════════════════════════════════════════════════════
+
+- Use ONLY ENGLISH LANGUAGE for the response
+- Search the internet for real news (use web search)
+- If no news is found, honestly state this
+- Consider timezone: search for news from the last 72 hours from the current moment
+- Priority: news with high potential to affect medium-term price movements (swing trading)
+
+═══════════════════════════════════════════════════════════════════
+FINAL REMINDER
+═══════════════════════════════════════════════════════════════════
+
+1. Search the internet for real news from the last 72 hours - DEEP SEARCH, not superficial
+2. Consider indirect connections (Elon Musk for DOGE, Tesla for BTC, etc.)
+3. ⚠️ CRITICAL: Search for news about CORRELATED and INVERSE-CORRELATED assets
+4. Analyze market-wide context - is the move isolated or part of broader trend?
+5. Focus on news affecting medium-term price movements
+6. Comprehensive summary: 3-6 sentences, include correlations and market context
+7. Don't just list events - analyze HOW they might affect price
+8. If no news found, honestly state this
+
+Goal: Provide the trader with current information about factors affecting the asset's price.
