@@ -1,0 +1,55 @@
+{
+  "symbol": "KMNOUSDT",
+  "signal": "LONG",
+  "confidence": 72,
+  "entry_price": 0.0611,
+  "stop_loss": 0.0605,
+  "take_profit_levels": [
+    0.0615,
+    0.0617,
+    0.062
+  ],
+  "risk_reward_ratio": 1.0,
+  "analysis": "LONG: Уровень поддержки подтверждён в Stage 1. Идеальный ранний вход по ATR (13% прогресс, среднее 8.2%). Цена выше EMA200 (+2.1%), тренд бычий. Объёмный коэффициент 1.0x (нормальный). Обнаружен незаполненный медвежий FVG выше цены. Корреляция с BTC высокая (0.87) и движение не согласовано — ключевой негативный фактор. Оценка: 82/115.",
+  "timestamp": "2025-12-11T14:06:30.659192",
+  "backtest_status": "FINAL",
+  "backtest_result": {
+    "outcome": "SL_HIT",
+    "exit_price": 0.0605,
+    "pnl_pct": -0.98,
+    "checked_at": "2025-12-12T23:46:41.856883"
+  },
+  "comprehensive_data": {
+    "current_price": 0.06114,
+    "indicators_1h": {
+      "price": 0.06114,
+      "ema9": 0.0614798258832555,
+      "ema21": 0.06199022065170828,
+      "ema50": 0.06234855444310762,
+      "rsi": 40.27535207619166,
+      "volume_ratio": 0.657482006925543
+    },
+    "indicators_4h": {
+      "price": 0.06113,
+      "ema9": 0.06216607389746705,
+      "ema21": 0.062419109673902934,
+      "ema50": 0.06197994279206891,
+      "rsi": 44.44795935572367,
+      "volume_ratio": 1.0012381434582
+    },
+    "market_data": {
+      "funding_rate": -0.00014153,
+      "oi_change_24h": -1.55,
+      "spread_pct": 0.0653
+    },
+    "correlation": {
+      "correlation": 0.866,
+      "should_block": false
+    },
+    "volume_profile": {
+      "poc": 0.06124920000000001,
+      "value_area_high": 0.06552240000000001,
+      "value_area_low": 0.05697600000000001
+    }
+  }
+}
