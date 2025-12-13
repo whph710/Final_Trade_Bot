@@ -1,0 +1,145 @@
+{
+  "timestamp": "2025-12-13T01:46:45.765347",
+  "signals_analyzed": 9,
+  "metrics": {
+    "total_signals": 9,
+    "active_signals": 4,
+    "closed_signals": 5,
+    "long_signals": 7,
+    "short_signals": 2,
+    "win_rate": 80.0,
+    "tp1_hit_rate": 20.0,
+    "tp2_hit_rate": 20.0,
+    "tp3_hit_rate": 40.0,
+    "sl_hit_rate": 20.0,
+    "avg_pnl_pct": 2.14,
+    "total_pnl_pct": 10.69,
+    "top_symbols": [
+      {
+        "symbol": "GMXUSDT",
+        "count": 1,
+        "win_rate": 100.0,
+        "total_pnl": 3.77
+      },
+      {
+        "symbol": "CVXUSDT",
+        "count": 1,
+        "win_rate": 100.0,
+        "total_pnl": 3.71
+      },
+      {
+        "symbol": "LUNA2USDT",
+        "count": 1,
+        "win_rate": 100.0,
+        "total_pnl": 3.03
+      },
+      {
+        "symbol": "PROMUSDT",
+        "count": 1,
+        "win_rate": 100.0,
+        "total_pnl": 2.85
+      },
+      {
+        "symbol": "CYBERUSDT",
+        "count": 1,
+        "win_rate": 0.0,
+        "total_pnl": -2.67
+      }
+    ]
+  },
+  "detailed_results": [
+    {
+      "symbol": "CVXUSDT",
+      "signal": "SHORT",
+      "confidence": 78,
+      "entry_price": 1.885,
+      "exit_price": 1.815,
+      "outcome": "TP3_HIT",
+      "pnl_pct": 3.71,
+      "timestamp": "2025-12-04T11:13:27.609863",
+      "from_cache": true
+    },
+    {
+      "symbol": "LUNA2USDT",
+      "signal": "SHORT",
+      "confidence": 78,
+      "entry_price": 0.0725,
+      "exit_price": 0.0703,
+      "outcome": "TP3_HIT",
+      "pnl_pct": 3.03,
+      "timestamp": "2025-12-04T21:39:57.546596",
+      "from_cache": true
+    },
+    {
+      "symbol": "GMXUSDT",
+      "signal": "LONG",
+      "confidence": 73,
+      "entry_price": 8.484,
+      "exit_price": 8.804,
+      "outcome": "TP2_HIT",
+      "pnl_pct": 3.77,
+      "timestamp": "2025-12-12T00:22:34.397732"
+    },
+    {
+      "symbol": "SEIUSDT",
+      "signal": "LONG",
+      "confidence": 72,
+      "entry_price": 0.1306,
+      "exit_price": 0.1306,
+      "outcome": "ACTIVE",
+      "pnl_pct": 0,
+      "timestamp": "2025-12-12T00:23:03.594479"
+    },
+    {
+      "symbol": "SOLUSDT",
+      "signal": "LONG",
+      "confidence": 72,
+      "entry_price": 134.41,
+      "exit_price": 134.41,
+      "outcome": "ACTIVE",
+      "pnl_pct": 0,
+      "timestamp": "2025-12-12T00:23:25.252292"
+    },
+    {
+      "symbol": "CYBERUSDT",
+      "signal": "LONG",
+      "confidence": 70,
+      "entry_price": 0.825,
+      "exit_price": 0.803,
+      "outcome": "SL_HIT",
+      "pnl_pct": -2.67,
+      "timestamp": "2025-12-12T18:03:03.596260",
+      "from_cache": true
+    },
+    {
+      "symbol": "PROMUSDT",
+      "signal": "LONG",
+      "confidence": 72,
+      "entry_price": 8.962,
+      "exit_price": 9.217,
+      "outcome": "TP1_HIT",
+      "pnl_pct": 2.85,
+      "timestamp": "2025-12-12T18:02:37.326367"
+    },
+    {
+      "symbol": "NEOUSDT",
+      "signal": "LONG",
+      "confidence": 75,
+      "entry_price": 4.005,
+      "exit_price": 4.005,
+      "outcome": "ACTIVE",
+      "pnl_pct": 0,
+      "timestamp": "2025-12-12T23:50:53.336474"
+    },
+    {
+      "symbol": "NEOUSDT",
+      "signal": "LONG",
+      "confidence": 70,
+      "entry_price": 4.02,
+      "exit_price": 4.02,
+      "outcome": "ACTIVE",
+      "pnl_pct": 0,
+      "timestamp": "2025-12-13T00:08:00.200388"
+    }
+  ]
+}

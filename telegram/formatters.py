@@ -10,7 +10,25 @@ from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 
-SIGNAL_TEMPLATE = """
+# Импортируем функцию определения типа актива
+try:
+    from utils.asset_detector import AssetTypeDetector
+    
+    def _detect_asset_type(symbol: str) -> str:
+        """Обертка для обратной совместимости"""
+        return AssetTypeDetector.detect(symbol)
+except ImportError:
+    # Fallback функция если импорт не удался
+    def _detect_asset_type(symbol: str) -> str:
+        """Определить тип актива по символу"""
+        crypto_suffixes = ['USDT', 'BUSD', 'USDC']
+        symbol_upper = symbol.upper()
+        for suffix in crypto_suffixes:
+            if symbol_upper.endswith(suffix):
+                return 'crypto'
+        return 'stock'
+
+SIGNAL_TEMPLATE_CRYPTO = """
 {emoji} <b>{symbol}</b> | {signal}
 ━━━━━━━━━━━━━━━━━━━━━━
 
@@ -21,11 +39,33 @@ SIGNAL_TEMPLATE = """
 
 <b>💰 УРОВНИ ВХОДА/ВЫХОДА:</b>
 
-• Entry:  <code>${entry_price:.4f}</code>
-• Stop:   <code>${stop_loss:.4f}</code>
-• TP1:    <code>${tp1:.4f}</code>
-• TP2:    <code>${tp2:.4f}</code>
-• TP3:    <code>${tp3:.4f}</code>
+• Entry:  <code>{entry_price:.4f}</code> $ 
+• Stop:   <code>{stop_loss:.4f}</code> $ 
+• TP1:    <code>{tp1:.4f}</code> $ 
+• TP2:    <code>{tp2:.4f}</code> $ 
+• TP3:    <code>{tp3:.4f}</code> $ 
+
+<b>📝 АНАЛИЗ:</b>
+
+<i>{analysis}</i>
+"""
+
+SIGNAL_TEMPLATE_STOCK = """
+{emoji} <b>{symbol}</b> | {signal}
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>📊 ПАРАМЕТРЫ:</b>
+
+• Confidence: <b>{confidence}%</b>
+• Risk/Reward: <b>1:{rr_ratio:.1f}</b>
+
+<b>💰 УРОВНИ ВХОДА/ВЫХОДА:</b>
+
+• Entry:  <code>{entry_price:.4f}</code> ₽ 
+• Stop:   <code>{stop_loss:.4f}</code> ₽ 
+• TP1:    <code>{tp1:.4f}</code> ₽ 
+• TP2:    <code>{tp2:.4f}</code> ₽ 
+• TP3:    <code>{tp3:.4f}</code> ₽ 
 
 <b>📝 АНАЛИЗ:</b>
 
@@ -58,7 +98,18 @@ def format_signal_for_telegram(signal) -> str:
         if len(analysis) > 500:
             analysis = analysis[:497] + "..."
 
-        return SIGNAL_TEMPLATE.format(
+        # Определяем тип актива для выбора правильного шаблона и валюты
+        asset_type = 'crypto'  # По умолчанию
+        if hasattr(signal, 'comprehensive_data') and signal.comprehensive_data:
+            asset_type = signal.comprehensive_data.get('asset_type', 'crypto')
+        else:
+            # Определяем по символу если нет в comprehensive_data
+            asset_type = _detect_asset_type(signal.symbol)
+        
+        # Выбираем соответствующий шаблон
+        template = SIGNAL_TEMPLATE_CRYPTO if asset_type == 'crypto' else SIGNAL_TEMPLATE_STOCK
+
+        return template.format(
             emoji=emoji,
             symbol=signal.symbol,
             signal=signal.signal,

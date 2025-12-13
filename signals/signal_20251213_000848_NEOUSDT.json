@@ -1,0 +1,55 @@
+{
+  "symbol": "NEOUSDT",
+  "signal": "LONG",
+  "confidence": 70,
+  "entry_price": 4.02,
+  "stop_loss": 3.944,
+  "take_profit_levels": [
+    4.2015,
+    4.383,
+    4.5645
+  ],
+  "risk_reward_ratio": 4.78,
+  "analysis": "LONG: Уровень поддержки с 4 касаниями (STRONG), не тестировался 28 свечей назад (VALID). Ложный пробой вниз типа SIMPLE на 6.2% с возвратом за 1 бар (идеально). Всплеск объема 3.28x и волатильности (диапазон пробойной свечи 1.8x ATR) подтверждают манипуляцию. Отсутствие ретеста и прилипания к уровню. RSI 37.4 в зоне для LONG. Оценка: 82/125.",
+  "timestamp": "2025-12-13T00:08:00.200388",
+  "backtest_status": "ACTIVE",
+  "backtest_result": {
+    "outcome": "ACTIVE",
+    "exit_price": 4.02,
+    "pnl_pct": 0,
+    "checked_at": "2025-12-13T11:48:52.962649"
+  },
+  "comprehensive_data": {
+    "current_price": 4.02,
+    "indicators_1h": {
+      "price": 4.02,
+      "ema9": 4.071465958449242,
+      "ema21": 4.1095068368890955,
+      "ema50": 4.133721128223805,
+      "rsi": 33.99702384690475,
+      "volume_ratio": 0.9389537263664887
+    },
+    "indicators_4h": {
+      "price": 3.998,
+      "ema9": 4.125121237884782,
+      "ema21": 4.144905635729037,
+      "ema50": 4.164952758953895,
+      "rsi": 37.356772181652936,
+      "volume_ratio": 3.277902123731484
+    },
+    "market_data": {
+      "funding_rate": 7.394e-05,
+      "oi_change_24h": 3.61,
+      "spread_pct": 0.025
+    },
+    "correlation": {
+      "correlation": 0.978,
+      "should_block": false
+    },
+    "volume_profile": {
+      "poc": 5.1584,
+      "value_area_high": 5.3568,
+      "value_area_low": 4.08704
+    }
+  }
+}

@@ -16,7 +16,10 @@ logger = logging.getLogger(__name__)
 @dataclass
 class BTCCorrelationAnalysis:
     """
-    Результат анализа корреляции с BTC
+    Результат анализа корреляции с рынком (BTC для криптовалют, MOEX для акций)
+    
+    Название класса оставлено для обратной совместимости.
+    Используется как для BTC, так и для MOEX.
 
     Attributes:
         correlation: Коэффициент корреляции Пирсона (-1 до 1)
@@ -24,7 +27,7 @@ class BTCCorrelationAnalysis:
         is_correlated: Значимая корреляция (>0.5)
         should_block: Блокировать ли сигнал (только при >0.85)
         confidence_adjustment: Корректировка confidence
-        reasoning: Текстовое описание
+        reasoning: Текстовое описание (содержит информацию о BTC или MOEX)
     """
     correlation: float
     correlation_strength: str
@@ -98,34 +101,36 @@ def calculate_correlation(
         return 0.0
 
 
-def analyze_btc_correlation(
+def analyze_market_correlation(
         symbol: str,
         symbol_candles,  # NormalizedCandles
-        btc_candles,     # NormalizedCandles
+        market_candles,  # NormalizedCandles (BTC для crypto, MOEX для stocks)
         signal_direction: str,
+        market_name: str = 'BTC',  # 'BTC' для crypto, 'MOEX' для stocks
         window: int = None
 ) -> BTCCorrelationAnalysis:
     """
-    Анализ корреляции с BTC
+    Анализ корреляции с рынком (BTC для криптовалют, MOEX для акций)
 
     Args:
         symbol: Символ актива
         symbol_candles: NormalizedCandles актива
-        btc_candles: NormalizedCandles BTC
+        market_candles: NormalizedCandles индекса рынка (BTC или MOEX)
         signal_direction: 'LONG' | 'SHORT'
+        market_name: Название индекса ('BTC' или 'MOEX')
         window: Окно корреляции
 
     Returns:
         BTCCorrelationAnalysis
     """
-    if not symbol_candles or not btc_candles:
+    if not symbol_candles or not market_candles:
         return BTCCorrelationAnalysis(
             correlation=0.0,
             correlation_strength='UNKNOWN',
             is_correlated=False,
             should_block=False,
             confidence_adjustment=0,
-            reasoning='Missing candles data'
+            reasoning=f'Missing {market_name} candles data'
         )
 
     from config import config
@@ -133,20 +138,20 @@ def analyze_btc_correlation(
     if window is None:
         window = config.CORR_WINDOW
     
-    if len(symbol_candles.closes) < window or len(btc_candles.closes) < window:
+    if len(symbol_candles.closes) < window or len(market_candles.closes) < window:
         return BTCCorrelationAnalysis(
             correlation=0.0,
             correlation_strength='UNKNOWN',
             is_correlated=False,
             should_block=False,
             confidence_adjustment=0,
-            reasoning='Insufficient data for correlation'
+            reasoning=f'Insufficient data for {market_name} correlation'
         )
 
     # Рассчитываем корреляцию
     corr = calculate_correlation(
         symbol_candles.closes,
-        btc_candles.closes,
+        market_candles.closes,
         window
     )
 
@@ -163,8 +168,8 @@ def analyze_btc_correlation(
         strength = 'WEAK'
         is_correlated = False
 
-    # Определяем BTC тренд
-    btc_trend = _determine_btc_trend(btc_candles.closes)
+    # Определяем тренд индекса рынка
+    market_trend = _determine_btc_trend(market_candles.closes)
 
     # Проверяем alignment
     should_block = False
@@ -173,30 +178,30 @@ def analyze_btc_correlation(
     # Блокируем ТОЛЬКО при очень сильной корреляции >threshold
     if abs_corr > config.CORR_BLOCK_THRESHOLD:
         if corr > config.CORR_BLOCK_THRESHOLD:  # Положительная корреляция
-            if signal_direction == 'LONG' and btc_trend == 'UP':
+            if signal_direction == 'LONG' and market_trend == 'UP':
                 adjustment = config.CORR_ALIGNED_BONUS
-                reasoning = f'LONG aligned with BTC uptrend (strong correlation {corr:.2f})'
-            elif signal_direction == 'SHORT' and btc_trend == 'DOWN':
+                reasoning = f'LONG aligned with {market_name} uptrend (strong correlation {corr:.2f})'
+            elif signal_direction == 'SHORT' and market_trend == 'DOWN':
                 adjustment = config.CORR_ALIGNED_BONUS
-                reasoning = f'SHORT aligned with BTC downtrend (strong correlation {corr:.2f})'
+                reasoning = f'SHORT aligned with {market_name} downtrend (strong correlation {corr:.2f})'
             else:
                 adjustment = config.CORR_MISALIGNED_PENALTY
                 should_block = False  # Не блокируем, только штрафуем
-                reasoning = f'{signal_direction} misaligned with BTC {btc_trend}, correlation {corr:.2f} WARNING'
+                reasoning = f'{signal_direction} misaligned with {market_name} {market_trend}, correlation {corr:.2f} WARNING'
 
         elif corr < -config.CORR_BLOCK_THRESHOLD:  # Отрицательная корреляция
-            if signal_direction == 'LONG' and btc_trend == 'DOWN':
+            if signal_direction == 'LONG' and market_trend == 'DOWN':
                 adjustment = config.CORR_ALIGNED_BONUS
-                reasoning = f'LONG with strong negative BTC correlation during BTC down'
-            elif signal_direction == 'SHORT' and btc_trend == 'UP':
+                reasoning = f'LONG with strong negative {market_name} correlation during {market_name} down'
+            elif signal_direction == 'SHORT' and market_trend == 'UP':
                 adjustment = config.CORR_ALIGNED_BONUS
-                reasoning = f'SHORT with strong negative BTC correlation during BTC up'
+                reasoning = f'SHORT with strong negative {market_name} correlation during {market_name} up'
             else:
                 adjustment = config.CORR_MISALIGNED_PENALTY
-                reasoning = f'{signal_direction} misaligned with negative BTC correlation WARNING'
+                reasoning = f'{signal_direction} misaligned with negative {market_name} correlation WARNING'
     else:
         # Умеренная/слабая корреляция
-        reasoning = f'{strength} BTC correlation {corr:.2f}'
+        reasoning = f'{strength} {market_name} correlation {corr:.2f}'
 
     return BTCCorrelationAnalysis(
         correlation=round(corr, 3),
@@ -211,7 +216,7 @@ def analyze_btc_correlation(
 def detect_correlation_anomaly(
         symbol: str,
         symbol_change_pct: float,
-        btc_change_pct: float,
+        market_change_pct: float,  # Переименовано из btc_change_pct для универсальности
         correlation: float
 ) -> CorrelationAnomalyAnalysis:
     """
@@ -234,9 +239,9 @@ def detect_correlation_anomaly(
 
     # Определяем ожидаемое направление движения
     if correlation > config.CORR_SIGNIFICANT_THRESHOLD:
-        expected_move_sign = np.sign(btc_change_pct)
+        expected_move_sign = np.sign(market_change_pct)
     elif correlation < -config.CORR_SIGNIFICANT_THRESHOLD:
-        expected_move_sign = -np.sign(btc_change_pct)
+        expected_move_sign = -np.sign(market_change_pct)
     else:
         expected_move_sign = 0
 
@@ -246,7 +251,7 @@ def detect_correlation_anomaly(
     if expected_move_sign != 0 and actual_move_sign != 0:
         if expected_move_sign == actual_move_sign:
             # Движение в ожидаемом направлении
-            expected_magnitude = abs(btc_change_pct) * abs(correlation)
+            expected_magnitude = abs(market_change_pct) * abs(correlation)
             actual_magnitude = abs(symbol_change_pct)
 
             # Decoupling strength: актив движется сильнее ожидаемого
@@ -264,7 +269,7 @@ def detect_correlation_anomaly(
                     anomaly_type='NONE',
                     expected_direction='NEUTRAL',
                     confidence_adjustment=0,
-                    reasoning=f'{symbol} following BTC normally'
+                    reasoning=f'{symbol} following market normally'
                 )
         else:
             # Decoupling weakness: актив движется против корреляции
@@ -273,7 +278,7 @@ def detect_correlation_anomaly(
                 anomaly_type='DECOUPLING_WEAKNESS',
                 expected_direction='NEUTRAL',
                 confidence_adjustment=config.CORR_ANOMALY_WEAKNESS_PENALTY,
-                reasoning=f'{symbol} {symbol_change_pct:+.1f}% vs BTC {btc_change_pct:+.1f}% divergence'
+                reasoning=f'{symbol} {symbol_change_pct:+.1f}% vs market {market_change_pct:+.1f}% divergence'
             )
 
     return CorrelationAnomalyAnalysis(
@@ -342,11 +347,30 @@ def _determine_btc_trend(btc_prices: np.ndarray, window: int = None) -> str:
         return 'FLAT'
 
 
+def analyze_btc_correlation(
+        symbol: str,
+        symbol_candles,  # NormalizedCandles
+        btc_candles,     # NormalizedCandles
+        signal_direction: str,
+        window: int = None
+) -> BTCCorrelationAnalysis:
+    """
+    Анализ корреляции с BTC (для обратной совместимости)
+    
+    Вызывает analyze_market_correlation с market_name='BTC'
+    """
+    return analyze_market_correlation(
+        symbol, symbol_candles, btc_candles, signal_direction, 
+        market_name='BTC', window=window
+    )
+
+
 def get_comprehensive_correlation_analysis(
         symbol: str,
         symbol_candles,
-        btc_candles,
-        signal_direction: str
+        market_candles,  # NormalizedCandles (BTC или MOEX)
+        signal_direction: str,
+        asset_type: str = 'crypto'  # 'crypto' или 'stock'
 ) -> Dict:
     """
     Comprehensive correlation analysis
@@ -354,72 +378,85 @@ def get_comprehensive_correlation_analysis(
     Args:
         symbol: Торговая пара
         symbol_candles: NormalizedCandles актива
-        btc_candles: NormalizedCandles BTC
+        market_candles: NormalizedCandles индекса рынка (BTC для crypto, MOEX для stocks)
         signal_direction: 'LONG' | 'SHORT'
+        asset_type: 'crypto' или 'stock'
 
     Returns:
         {
-            'btc_correlation': BTCCorrelationAnalysis,
+            'market_correlation': BTCCorrelationAnalysis - универсальный ключ (BTC для crypto, MOEX для stocks),
+            'btc_correlation': BTCCorrelationAnalysis - оставлено для обратной совместимости,
             'correlation_anomaly': CorrelationAnomalyAnalysis,
             'total_confidence_adjustment': int,
-            'should_block_signal': bool
+            'should_block_signal': bool,
+            'market_name': str - 'BTC' или 'MOEX'
         }
     """
-    if not symbol_candles or not btc_candles:
+    market_name = 'BTC' if asset_type == 'crypto' else 'MOEX'
+    
+    empty_corr_analysis = BTCCorrelationAnalysis(
+        correlation=0.0,
+        correlation_strength='UNKNOWN',
+        is_correlated=False,
+        should_block=False,
+        confidence_adjustment=0,
+        reasoning=f'Missing {market_name} data'
+    )
+    
+    if not symbol_candles or not market_candles:
         return {
-            'btc_correlation': BTCCorrelationAnalysis(
-                correlation=0.0,
-                correlation_strength='UNKNOWN',
-                is_correlated=False,
-                should_block=False,
-                confidence_adjustment=0,
-                reasoning='Missing data'
-            ),
+            'market_correlation': empty_corr_analysis,
+            'btc_correlation': empty_corr_analysis,  # Обратная совместимость
             'correlation_anomaly': CorrelationAnomalyAnalysis(
                 anomaly_detected=False,
                 anomaly_type='NONE',
                 expected_direction='NEUTRAL',
                 confidence_adjustment=0,
-                reasoning='Missing data'
+                reasoning=f'Missing {market_name} data'
             ),
             'total_confidence_adjustment': 0,
-            'should_block_signal': False
+            'should_block_signal': False,
+            'market_name': market_name
         }
 
-    # 1. BTC Correlation Analysis
-    btc_corr_analysis = analyze_btc_correlation(
+    # 1. Market Correlation Analysis (BTC для crypto, MOEX для stocks)
+    market_corr_analysis = analyze_market_correlation(
         symbol,
         symbol_candles,
-        btc_candles,
-        signal_direction
+        market_candles,
+        signal_direction,
+        market_name=market_name
     )
 
     # 2. Price Changes
     symbol_change_1h = calculate_price_change(symbol_candles.closes, window=1)
-    btc_change_1h = calculate_price_change(btc_candles.closes, window=1)
+    market_change_1h = calculate_price_change(market_candles.closes, window=1)
 
     # 3. Anomaly Detection
     anomaly_analysis = detect_correlation_anomaly(
         symbol,
         symbol_change_1h,
-        btc_change_1h,
-        btc_corr_analysis.correlation
+        market_change_1h,
+        market_corr_analysis.correlation
     )
 
     # 4. Total Adjustment
     total_adjustment = (
-        btc_corr_analysis.confidence_adjustment +
+        market_corr_analysis.confidence_adjustment +
         anomaly_analysis.confidence_adjustment
     )
 
     return {
-        'btc_correlation': btc_corr_analysis,
+        'market_correlation': market_corr_analysis,  # Универсальный ключ (BTC для crypto, MOEX для stocks)
+        'btc_correlation': market_corr_analysis,  # Оставлено для обратной совместимости
         'correlation_anomaly': anomaly_analysis,
         'total_confidence_adjustment': total_adjustment,
-        'should_block_signal': btc_corr_analysis.should_block,
+        'should_block_signal': market_corr_analysis.should_block,
         'price_changes': {
             'symbol_1h': symbol_change_1h,
-            'btc_1h': btc_change_1h
+            'market_1h': market_change_1h
         },
-        'btc_trend': _determine_btc_trend(btc_candles.closes)
+        'market_trend': _determine_btc_trend(market_candles.closes),  # Универсальное название
+        'btc_trend': _determine_btc_trend(market_candles.closes),  # Оставлено для обратной совместимости
+        'market_name': market_name  # Добавляем информацию о рынке (BTC или MOEX)
     }

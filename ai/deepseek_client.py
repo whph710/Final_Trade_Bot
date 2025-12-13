@@ -32,8 +32,8 @@ def load_prompt_cached(filename: str) -> str:
 
     search_paths = [
         Path(filename),
-        Path(__file__).parent / "prompts" / Path(filename).name,
-        Path(__file__).parent.parent / "prompts" / Path(filename).name,
+        Path(__file__).parent.parent / "prompts" / Path(filename).name,  # Новая папка prompts/
+        Path(__file__).parent / "prompts" / Path(filename).name,  # Старая папка (для обратной совместимости)
     ]
 
     filepath = None
@@ -136,7 +136,7 @@ class DeepSeekClient:
             # Загружаем промпт
             system_prompt = load_prompt_cached("prompt_select.txt")
 
-            # Формируем описание пар
+            # Формируем описание пар с данными о false breakout
             pairs_info = []
             for pair in pairs_data:
                 symbol = pair.get('symbol', 'UNKNOWN')
@@ -146,6 +146,34 @@ class DeepSeekClient:
                     f"Direction: {pair.get('direction', 'NONE')} "
                     f"({pair.get('confidence', 0)}%)"
                 )
+
+                # Support/Resistance Level
+                if pair.get('support_resistance_level'):
+                    level = pair['support_resistance_level']
+                    info.append(
+                        f"Level: {level.get('level_type', 'UNKNOWN')} @ ${level.get('price', 0):.4f} "
+                        f"({level.get('touches', 0)} touches, strength: {level.get('strength', 0):.0f})"
+                    )
+
+                # False Breakout
+                if pair.get('false_breakout'):
+                    fb = pair['false_breakout']
+                    info.append(
+                        f"False Breakout: {fb.get('breakout_type', 'UNKNOWN')} "
+                        f"({fb.get('breakout_direction', 'UNKNOWN')}), "
+                        f"depth: {fb.get('breakout_depth_pct', 0):.2f}%, "
+                        f"tail: {fb.get('tail_size_pct', 0):.1f}% ATR, "
+                        f"volume: {fb.get('volume_spike_ratio', 0):.2f}x, "
+                        f"volatility: {fb.get('volatility_spike', 0):.2f}x"
+                    )
+
+                # Candle Pattern
+                if pair.get('candle_pattern'):
+                    cp = pair['candle_pattern']
+                    info.append(
+                        f"Candle Pattern: {cp.get('type', 'UNKNOWN')} "
+                        f"(strength: {cp.get('strength', 0):.0f})"
+                    )
 
                 # 1H indicators
                 if pair.get('indicators_1h'):

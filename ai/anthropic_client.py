@@ -161,6 +161,9 @@ class AnthropicClient:
                         'direction': item.get('direction', 'NONE'),
                         'confidence': item.get('confidence', 0)
                     },
+                    'support_resistance_level': item.get('support_resistance_level'),
+                    'false_breakout': item.get('false_breakout'),
+                    'candle_pattern': item.get('candle_pattern'),
                     'candles_1h': item.get('candles_1h', [])[-30:],
                     'candles_4h': item.get('candles_4h', [])[-30:],
                     'indicators_1h': indicators_1h,

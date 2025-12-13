@@ -1,0 +1,55 @@
+{
+  "symbol": "CYBERUSDT",
+  "signal": "LONG",
+  "confidence": 70,
+  "entry_price": 0.825,
+  "stop_loss": 0.803,
+  "take_profit_levels": [
+    0.8388,
+    0.8525,
+    0.8663
+  ],
+  "risk_reward_ratio": 1.25,
+  "analysis": "LONG: Канал консолидации 19 дней (VALID), 4 касания верхней и 5 касаний нижней границ (STRONG), ширина 8.5% (узкий канал). Ложный пробой вниз на 1.8% с возвратом за 2 бара (идеально). Выкупной бар (BUYOUT) силой 85 (очень сильный). Инструмент показал независимость от BTC (низкая корреляция -0.24). Оценка: 85/125.",
+  "timestamp": "2025-12-12T18:03:03.596260",
+  "backtest_status": "FINAL",
+  "backtest_result": {
+    "outcome": "SL_HIT",
+    "exit_price": 0.803,
+    "pnl_pct": -2.67,
+    "checked_at": "2025-12-12T23:47:10.251455"
+  },
+  "comprehensive_data": {
+    "current_price": 0.825,
+    "indicators_1h": {
+      "price": 0.825,
+      "ema9": 0.8258614136242269,
+      "ema21": 0.8300683333970038,
+      "ema50": 0.8357839350323477,
+      "rsi": 44.914351847705845,
+      "volume_ratio": 0.5721098403768585
+    },
+    "indicators_4h": {
+      "price": 0.8279,
+      "ema9": 0.8351661350470245,
+      "ema21": 0.8397852396543657,
+      "ema50": 0.8452296516224744,
+      "rsi": 45.68009556379412,
+      "volume_ratio": 0.516951929430816
+    },
+    "market_data": {
+      "funding_rate": -0.0001425,
+      "oi_change_24h": 10.7,
+      "spread_pct": 0.0365
+    },
+    "correlation": {
+      "correlation": -0.245,
+      "should_block": false
+    },
+    "volume_profile": {
+      "poc": 0.8542800000000003,
+      "value_area_high": 0.9096500000000003,
+      "value_area_low": 0.7751800000000002
+    }
+  }
+}

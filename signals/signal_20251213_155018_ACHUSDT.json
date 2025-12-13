@@ -1,0 +1,50 @@
+{
+  "symbol": "ACHUSDT",
+  "signal": "LONG",
+  "confidence": 78,
+  "entry_price": 0.009134,
+  "stop_loss": 0.008645,
+  "take_profit_levels": [
+    0.009481,
+    0.009828,
+    0.010175
+  ],
+  "risk_reward_ratio": 1.42,
+  "analysis": "LONG: Уровень поддержки с 4 касаниями (STRONG), не тестировался ~30 свечей (VALID). Ложный пробой вниз типа SIMPLE на ~2.1% с возвратом за 1 бар (идеально). Всплеск объема 1.89x и волатильности (диапазон пробойной свечи ~1.8x ATR). Отсутствие ретеста и консолидации у уровня. Ближайший неисполненный BULLISH FVG добавляет уверенности. Оценка: 98/125.",
+  "timestamp": "2025-12-13T15:50:17.900111",
+  "backtest_status": "NOT_CHECKED",
+  "backtest_result": null,
+  "comprehensive_data": {
+    "current_price": 0.009134,
+    "indicators_1h": {
+      "price": 0.009134,
+      "ema9": 0.009155367868031655,
+      "ema21": 0.009086995803961965,
+      "ema50": 0.009000488784344863,
+      "rsi": 53.87412644454979,
+      "volume_ratio": 0.4065120727826922
+    },
+    "indicators_4h": {
+      "price": 0.009202,
+      "ema9": 0.009042830976228981,
+      "ema21": 0.008965633793737682,
+      "ema50": 0.00900748075691663,
+      "rsi": 56.4689186554134,
+      "volume_ratio": 1.8899431022509265
+    },
+    "market_data": {
+      "funding_rate": 5e-05,
+      "oi_change_24h": 4.12,
+      "spread_pct": 0.0321
+    },
+    "correlation": {
+      "correlation": 0.208,
+      "should_block": false
+    },
+    "volume_profile": {
+      "poc": 0.009467399999999997,
+      "value_area_high": 0.012928599999999998,
+      "value_area_low": 0.0088566
+    }
+  }
+}

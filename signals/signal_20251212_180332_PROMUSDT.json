@@ -1,0 +1,55 @@
+{
+  "symbol": "PROMUSDT",
+  "signal": "LONG",
+  "confidence": 72,
+  "entry_price": 8.962,
+  "stop_loss": 8.907,
+  "take_profit_levels": [
+    9.217,
+    9.472,
+    9.727
+  ],
+  "risk_reward_ratio": 9.27,
+  "analysis": "LONG: Канал консолидации 19 дней (VALID), 4 касания верхней и 3 нижней границ (STRONG), ширина 6.5% (узкий канал). Ложный пробой вниз на 1.8% с возвратом за 2 бара (идеально). Выкупной бар силой 85 (очень сильный). Инструмент показал относительную силу при падении BTC (корреляция -0.62). Оценка: 86/125.",
+  "timestamp": "2025-12-12T18:02:37.326367",
+  "backtest_status": "CHECKED",
+  "backtest_result": {
+    "outcome": "TP1_HIT",
+    "exit_price": 9.217,
+    "pnl_pct": 2.85,
+    "checked_at": "2025-12-13T11:48:52.494405"
+  },
+  "comprehensive_data": {
+    "current_price": 8.962,
+    "indicators_1h": {
+      "price": 8.962,
+      "ema9": 9.040032152692735,
+      "ema21": 9.070983857149429,
+      "ema50": 9.073808083450771,
+      "rsi": 37.09561005588476,
+      "volume_ratio": 1.2505270327246778
+    },
+    "indicators_4h": {
+      "price": 9.055,
+      "ema9": 9.076379847764652,
+      "ema21": 9.070608714084486,
+      "ema50": 9.088592755004624,
+      "rsi": 48.18981609005196,
+      "volume_ratio": 0.9327454802179425
+    },
+    "market_data": {
+      "funding_rate": 5e-05,
+      "oi_change_24h": -0.69,
+      "spread_pct": 0.0894
+    },
+    "correlation": {
+      "correlation": -0.618,
+      "should_block": false
+    },
+    "volume_profile": {
+      "poc": 9.17904,
+      "value_area_high": 10.67946,
+      "value_area_low": 9.00252
+    }
+  }
+}

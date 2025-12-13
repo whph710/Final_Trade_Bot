@@ -76,6 +76,7 @@ class TradingBotTelegram:
             self.admin_ids = [632260351]  # Fallback к основному админу
         self.group_id = group_id
         self.trading_bot_running = False
+        self.bot_stopped = False  # Флаг остановки бота
         self._typing_task = None
 
         from utils import get_signal_storage, get_backtester
@@ -108,14 +109,35 @@ class TradingBotTelegram:
         """Регистрация обработчиков команд"""
         self.dp.message.register(self.start_command, Command(commands=["start"]))
 
+        # Главное меню
+        self.dp.message.register(
+            self.handle_crypto_market_menu,
+            F.text == "🪙 Crypto market"
+        )
+        self.dp.message.register(
+            self.handle_stock_market_menu,
+            F.text == "📈 Stock market"
+        )
+        self.dp.message.register(
+            self.handle_info_menu,
+            F.text == "ℹ️ Инфо"
+        )
+        self.dp.message.register(
+            self.stop_bot,
+            F.text == "🛑 Остановить"
+        )
+
+        # Crypto market подменю
         self.dp.message.register(
             self.handle_run_analysis,
             F.text == "▶️ Запустить сейчас"
         )
         self.dp.message.register(
             self.handle_manual_pair_analysis,
-            F.text == "🔍 Анализ пары"
+            F.text == "🔍 Проверка пары"
         )
+
+        # Info подменю
         self.dp.message.register(
             self.show_status,
             F.text == "📊 Статус"
@@ -128,10 +150,18 @@ class TradingBotTelegram:
             self.handle_backtest,
             F.text == "📊 Backtest"
         )
+
+        # Stock market подменю
         self.dp.message.register(
-            self.stop_bot,
-            F.text == "🛑 Остановить"
+            self.handle_stock_run_analysis,
+            F.text == "▶️ Запустить сейчас (Stock)"
         )
+        self.dp.message.register(
+            self.handle_stock_check_asset,
+            F.text == "🔍 Проверить актив"
+        )
+        
+        # Stock market FSM handlers - обрабатываются в process_symbol_input
 
         # ✅ АДМИН-ПАНЕЛЬ: Команды только для админа
         self.dp.message.register(
@@ -207,15 +237,23 @@ class TradingBotTelegram:
             await message.reply("❌ Доступ запрещён")
             return
 
-        # ✅ АДМИН: Добавляем кнопку админ-панели для админа
+        # Если бот был остановлен, возобновляем работу
+        if self.bot_stopped:
+            self.bot_stopped = False
+            # Перезапускаем scheduler
+            from telegram.scheduler import ScheduleManager
+            self.scheduler = ScheduleManager()
+            self.scheduler.setup_schedule(self, self._run_scheduled_analysis)
+            logger.info("Bot resumed - scheduler restarted")
+
+        await self._show_main_menu(message)
+
+    def _get_main_menu_keyboard(self, user_id: int) -> ReplyKeyboardMarkup:
+        """Получить клавиатуру главного меню"""
         keyboard_buttons = [
-            [KeyboardButton(text="▶️ Запустить сейчас")],
-            [KeyboardButton(text="🔍 Анализ пары")],
-            [
-                KeyboardButton(text="📊 Статус"),
-                KeyboardButton(text="📈 Статистика")
-            ],
-            [KeyboardButton(text="📊 Backtest")],
+            [KeyboardButton(text="🪙 Crypto market")],
+            [KeyboardButton(text="📈 Stock market")],
+            [KeyboardButton(text="ℹ️ Инфо")],
             [KeyboardButton(text="🛑 Остановить")]
         ]
         
@@ -223,22 +261,166 @@ class TradingBotTelegram:
         if self._is_admin(user_id):
             keyboard_buttons.append([KeyboardButton(text="⚙️ Админ-панель")])
         
-        keyboard = ReplyKeyboardMarkup(
+        return ReplyKeyboardMarkup(
             keyboard=keyboard_buttons,
             resize_keyboard=True
         )
 
+    async def _show_main_menu(self, message: Message):
+        """Показать главное меню"""
+        user_id = message.from_user.id
+        keyboard = self._get_main_menu_keyboard(user_id)
+
         await message.answer(
             "🤖 <b>Trading Bot активирован!</b>\n\n"
             "Бот работает по расписанию или по команде.\n\n"
-            "<b>Доступные команды:</b>\n"
-            "▶️ Запустить сейчас - полный цикл анализа\n"
-            "🔍 Анализ пары - анализ конкретной пары (LONG/SHORT)\n"
-            "📊 Статус - текущее состояние\n"
-            "📈 Статистика - статистика запусков\n"
-            "📊 Backtest - backtest сохранённых сигналов\n"
+            "<b>Доступные разделы:</b>\n"
+            "🪙 Crypto market - анализ криптовалютного рынка\n"
+            "📈 Stock market - анализ фондового рынка (в разработке)\n"
+            "ℹ️ Инфо - статус, статистика, backtest\n"
             "🛑 Остановить - остановка бота",
             reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
+    # ========================================================================
+    # НАВИГАЦИЯ ПО МЕНЮ
+    # ========================================================================
+
+    async def handle_crypto_market_menu(self, message: Message):
+        """Показать меню Crypto market"""
+        user_id = message.from_user.id
+
+        if not self._is_authorized(user_id):
+            return
+
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="▶️ Запустить сейчас")],
+                [KeyboardButton(text="🔍 Проверка пары")],
+                [KeyboardButton(text="🔙 Назад")]
+            ],
+            resize_keyboard=True
+        )
+
+        await message.answer(
+            "🪙 <b>CRYPTO MARKET</b>\n\n"
+            "<b>Доступные действия:</b>\n"
+            "▶️ Запустить сейчас - полный цикл анализа криптовалютного рынка\n"
+            "🔍 Проверка пары - анализ конкретной криптопары (LONG/SHORT)",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
+    async def handle_stock_market_menu(self, message: Message):
+        """Показать меню Stock market (заглушка)"""
+        user_id = message.from_user.id
+
+        if not self._is_authorized(user_id):
+            return
+
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="▶️ Запустить сейчас (Stock)")],
+                [KeyboardButton(text="🔍 Проверить актив")],
+                [KeyboardButton(text="🔙 Назад")]
+            ],
+            resize_keyboard=True
+        )
+
+        await message.answer(
+            "📈 <b>STOCK MARKET</b>\n\n"
+            "⚠️ <i>Функционал в разработке</i>\n\n"
+            "<b>Доступные действия:</b>\n"
+            "▶️ Запустить сейчас - полный цикл анализа фондового рынка\n"
+            "🔍 Проверить актив - анализ конкретного актива",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
+    async def handle_info_menu(self, message: Message):
+        """Показать меню Инфо"""
+        user_id = message.from_user.id
+
+        if not self._is_authorized(user_id):
+            return
+
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="📊 Статус")],
+                [KeyboardButton(text="📈 Статистика")],
+                [KeyboardButton(text="📊 Backtest")],
+                [KeyboardButton(text="🔙 Назад")]
+            ],
+            resize_keyboard=True
+        )
+
+        await message.answer(
+            "ℹ️ <b>ИНФОРМАЦИЯ</b>\n\n"
+            "<b>Доступные действия:</b>\n"
+            "📊 Статус - текущее состояние бота\n"
+            "📈 Статистика - статистика запусков\n"
+            "📊 Backtest - backtest сохранённых сигналов",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
+    async def handle_stock_run_analysis(self, message: Message):
+        """Обработчик запуска анализа фондового рынка"""
+        if not self._is_authorized(message.from_user.id):
+            return
+
+        # Проверяем, не остановлен ли бот
+        if self.bot_stopped:
+            keyboard = ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="▶️ Запустить сейчас (Stock)")],
+                    [KeyboardButton(text="🔍 Проверить актив")],
+                    [KeyboardButton(text="🔙 Назад")]
+                ],
+                resize_keyboard=True
+            )
+            await message.answer(
+                "⚠️ <b>Бот остановлен</b>\n\n"
+                "Используйте команду /start для возобновления работы",
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+            return
+
+        await self.run_stock_analysis_manual(message)
+
+    async def handle_stock_check_asset(self, message: Message, state: FSMContext):
+        """Начать диалог для проверки актива фондового рынка"""
+        user_id = message.from_user.id
+
+        if not self._is_authorized(user_id):
+            return
+
+        # Проверяем, не остановлен ли бот
+        if self.bot_stopped:
+            keyboard = ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="▶️ Запустить сейчас (Stock)")],
+                    [KeyboardButton(text="🔍 Проверить актив")],
+                    [KeyboardButton(text="🔙 Назад")]
+                ],
+                resize_keyboard=True
+            )
+            await message.answer(
+                "⚠️ <b>Бот остановлен</b>\n\n"
+                "Используйте команду /start для возобновления работы",
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+            return
+
+        await state.set_state(ManualAnalysisStates.waiting_for_symbol)
+
+        await message.answer(
+            "🔍 <b>Проверка актива фондового рынка</b>\n\n"
+            "Отправьте тикер акции (например: SBER, GAZP, YNDX, AAPL, TSLA)\n\n"
+            "💡 <i>Поддерживаются российские и зарубежные акции</i>",
             parse_mode="HTML"
         )
 
@@ -251,6 +433,24 @@ class TradingBotTelegram:
         user_id = message.from_user.id
 
         if not self._is_authorized(user_id):
+            return
+
+        # Проверяем, не остановлен ли бот
+        if self.bot_stopped:
+            keyboard = ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="▶️ Запустить сейчас")],
+                    [KeyboardButton(text="🔍 Проверка пары")],
+                    [KeyboardButton(text="🔙 Назад")]
+                ],
+                resize_keyboard=True
+            )
+            await message.answer(
+                "⚠️ <b>Бот остановлен</b>\n\n"
+                "Используйте команду /start для возобновления работы",
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
             return
 
         await state.set_state(ManualAnalysisStates.waiting_for_symbol)
@@ -276,13 +476,44 @@ class TradingBotTelegram:
 
         symbol = message.text.strip().upper()
 
-        if not symbol or len(symbol) < 3 or len(symbol) > 20:
+        if not symbol or len(symbol) < 2 or len(symbol) > 20:
             await message.answer(
-                "⚠️ Некорректный символ. Попробуйте ещё раз (например: <code>BTCUSDT</code>)",
+                "⚠️ Некорректный символ. Попробуйте ещё раз (например: <code>BTCUSDT</code> или <code>SBER</code>)",
                 parse_mode="HTML"
             )
             return
 
+        # Определяем тип актива
+        is_stock = not symbol.endswith('USDT') and not symbol.endswith('USD') and not symbol.endswith('BUSD') and not symbol.endswith('USDC')
+        
+        if is_stock:
+            # Это акция - используем логику для акций
+            await state.update_data(symbol=symbol, asset_type='stock')
+            await state.set_state(ManualAnalysisStates.waiting_for_direction)
+            
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(text="🟢 LONG", callback_data="direction:LONG"),
+                        InlineKeyboardButton(text="🔴 SHORT", callback_data="direction:SHORT")
+                    ],
+                    [
+                        InlineKeyboardButton(text="❌ Отмена", callback_data="direction:CANCEL")
+                    ]
+                ]
+            )
+            
+            await message.answer(
+                f"✅ Акция: <b>{symbol}</b>\n\n"
+                f"Выберите направление анализа:",
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+            return
+        
+        # Это криптовалюта
         if not symbol.endswith('USDT'):
             await message.answer(
                 "⚠️ Бот работает только с парами USDT (например: <code>BTCUSDT</code>)\n\n"
@@ -290,6 +521,8 @@ class TradingBotTelegram:
                 parse_mode="HTML"
             )
             return
+        
+        await state.update_data(symbol=symbol, asset_type='crypto')
 
         await state.update_data(symbol=symbol)
         await state.set_state(ManualAnalysisStates.waiting_for_direction)
@@ -325,6 +558,7 @@ class TradingBotTelegram:
 
         data = await state.get_data()
         symbol = data.get('symbol', 'UNKNOWN')
+        asset_type = data.get('asset_type', 'crypto')
 
         action = callback.data.split(':')[1]
 
@@ -336,18 +570,19 @@ class TradingBotTelegram:
 
         await callback.answer(f"✅ Анализирую {symbol} {action}")
 
+        asset_name = "Акция" if asset_type == 'stock' else "Пара"
         await callback.message.edit_text(
             f"⏳ <b>Запуск анализа...</b>\n\n"
-            f"Пара: <b>{symbol}</b>\n"
+            f"{asset_name}: <b>{symbol}</b>\n"
             f"Направление: <b>{action}</b>",
             parse_mode="HTML"
         )
 
-        await self._run_manual_pair_analysis(symbol, action, user_id)
+        await self._run_manual_pair_analysis(symbol, action, user_id, asset_type)
         await state.clear()
 
-    async def _run_manual_pair_analysis(self, symbol: str, direction: str, user_id: int):
-        """Запуск Stage 3 для конкретной пары и направления"""
+    async def _run_manual_pair_analysis(self, symbol: str, direction: str, user_id: int, asset_type: str = 'crypto'):
+        """Запуск Stage 3 для конкретной пары/акции и направления"""
         try:
             await self._start_typing_indicator(user_id)
 
@@ -355,14 +590,24 @@ class TradingBotTelegram:
                 from stages.stage3_analysis import analyze_single_pair
                 from data_providers import cleanup_session
 
-                logger.info(f"Manual analysis: {symbol} {direction}")
+                logger.info(f"Manual analysis: {symbol} {direction} (type: {asset_type})")
 
-                result = await analyze_single_pair(symbol, direction)
+                result = await analyze_single_pair(symbol, direction, asset_type=asset_type)
 
                 await cleanup_session()
 
             finally:
                 await self._stop_typing_indicator()
+
+            # Клавиатура для возврата в меню Crypto market
+            crypto_keyboard = ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="▶️ Запустить сейчас")],
+                    [KeyboardButton(text="🔍 Проверка пары")],
+                    [KeyboardButton(text="🔙 Назад")]
+                ],
+                resize_keyboard=True
+            )
 
             if result and result.signal != 'NO_SIGNAL':
                 self.signal_storage.save_signal(result)
@@ -377,6 +622,7 @@ class TradingBotTelegram:
                         f"Confidence: <b>{result.confidence}%</b>\n\n"
                         f"💾 Сигнал сохранён в signals/"
                     ),
+                    reply_markup=crypto_keyboard,
                     parse_mode="HTML"
                 )
             else:
@@ -394,6 +640,7 @@ class TradingBotTelegram:
                         f"Пара: <b>{symbol}</b>\n"
                         f"Причина: {rejection_reason}"
                     ),
+                    reply_markup=crypto_keyboard,
                     parse_mode="HTML"
                 )
 
@@ -407,9 +654,20 @@ class TradingBotTelegram:
             except:
                 pass
 
+            # Клавиатура для возврата в меню Crypto market
+            crypto_keyboard = ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="▶️ Запустить сейчас")],
+                    [KeyboardButton(text="🔍 Проверка пары")],
+                    [KeyboardButton(text="🔙 Назад")]
+                ],
+                resize_keyboard=True
+            )
+
             await self.bot.send_message(
                 chat_id=user_id,
                 text=f"❌ <b>Ошибка анализа:</b> {str(e)[:200]}",
+                reply_markup=crypto_keyboard,
                 parse_mode="HTML"
             )
 
@@ -420,6 +678,24 @@ class TradingBotTelegram:
     async def handle_run_analysis(self, message: Message):
         """Обработчик кнопки '▶️ Запустить сейчас'"""
         if not self._is_authorized(message.from_user.id):
+            return
+
+        # Проверяем, не остановлен ли бот
+        if self.bot_stopped:
+            keyboard = ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="▶️ Запустить сейчас")],
+                    [KeyboardButton(text="🔍 Проверка пары")],
+                    [KeyboardButton(text="🔙 Назад")]
+                ],
+                resize_keyboard=True
+            )
+            await message.answer(
+                "⚠️ <b>Бот остановлен</b>\n\n"
+                "Используйте команду /start для возобновления работы",
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
             return
 
         await self.run_trading_bot_manual(message)
@@ -489,6 +765,16 @@ class TradingBotTelegram:
             finally:
                 await self._stop_typing_indicator()
 
+            # Клавиатура для возврата в меню Crypto market
+            crypto_keyboard = ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="▶️ Запустить сейчас")],
+                    [KeyboardButton(text="🔍 Проверка пары")],
+                    [KeyboardButton(text="🔙 Назад")]
+                ],
+                resize_keyboard=True
+            )
+
             if approved_signals:
                 saved = self.signal_storage.save_signals_batch(approved_signals)
                 logger.info(f"Saved {saved} signals to storage")
@@ -504,6 +790,7 @@ class TradingBotTelegram:
                         f"Отклонено: {len(rejected_signals)}\n\n"
                         f"💾 Сигналы сохранены в signals/"
                     ),
+                    reply_markup=crypto_keyboard,
                     parse_mode="HTML"
                 )
             else:
@@ -513,6 +800,7 @@ class TradingBotTelegram:
                         f"⚠️ <b>Сигналов не найдено</b>\n\n"
                         f"Отклонено: {len(rejected_signals)}"
                     ),
+                    reply_markup=crypto_keyboard,
                     parse_mode="HTML"
                 )
 
@@ -531,9 +819,170 @@ class TradingBotTelegram:
             except:
                 pass
 
+            # Клавиатура для возврата в меню Crypto market
+            crypto_keyboard = ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="▶️ Запустить сейчас")],
+                    [KeyboardButton(text="🔍 Проверка пары")],
+                    [KeyboardButton(text="🔙 Назад")]
+                ],
+                resize_keyboard=True
+            )
+
             await self.bot.send_message(
                 chat_id=user_id,
                 text=f"❌ <b>Ошибка:</b> {str(e)[:200]}",
+                reply_markup=crypto_keyboard,
+                parse_mode="HTML"
+            )
+
+    async def run_stock_analysis_manual(self, message: Message):
+        """Ручной запуск анализа фондового рынка (полный цикл)"""
+        user_id = message.from_user.id
+
+        try:
+            await self.bot.send_message(
+                chat_id=user_id,
+                text="⏳ <b>Запуск анализа фондового рынка...</b>",
+                parse_mode="HTML"
+            )
+
+            await self._start_typing_indicator(user_id)
+
+            try:
+                from stages import run_stage1, run_stage2, run_stage3
+                from data_providers import get_all_stocks, cleanup_session
+
+                logger.info("Stock analysis: Starting Stage 1")
+                stocks = await get_all_stocks()
+                
+                if not stocks:
+                    await self.bot.send_message(
+                        chat_id=user_id,
+                        text="❌ <b>Не удалось загрузить список акций</b>\n\n"
+                             "Проверьте настройку TINKOFF_INVEST_TOKEN в .env",
+                        parse_mode="HTML"
+                    )
+                    await cleanup_session()
+                    return
+
+                # Ограничиваем количество акций для анализа (топ-100 по ликвидности)
+                stocks = stocks[:100]
+                
+                candidates = await run_stage1(stocks)
+
+                if not candidates:
+                    await self.bot.send_message(
+                        chat_id=user_id,
+                        text="❌ <b>Stage 1: Сигналов не найдено</b>",
+                        parse_mode="HTML"
+                    )
+                    await cleanup_session()
+                    return
+
+                await self.bot.send_message(
+                    chat_id=user_id,
+                    text=f"✅ <b>Stage 1: Найдено {len(candidates)} сигналов</b>",
+                    parse_mode="HTML"
+                )
+
+                logger.info("Stock analysis: Starting Stage 2")
+                selected_stocks = await run_stage2(candidates)
+
+                if not selected_stocks:
+                    await self.bot.send_message(
+                        chat_id=user_id,
+                        text="❌ <b>Stage 2: AI не выбрал акции</b>",
+                        parse_mode="HTML"
+                    )
+                    await cleanup_session()
+                    return
+
+                await self.bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        f"✅ <b>Stage 2: AI выбрал {len(selected_stocks)} акций</b>\n\n"
+                        f"{'  •  '.join(selected_stocks)}"
+                    ),
+                    parse_mode="HTML"
+                )
+
+                logger.info("Stock analysis: Starting Stage 3")
+                approved_signals, rejected_signals = await run_stage3(selected_stocks)
+
+                await cleanup_session()
+
+            finally:
+                await self._stop_typing_indicator()
+
+            # Клавиатура для возврата в меню Stock market
+            stock_keyboard = ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="▶️ Запустить сейчас (Stock)")],
+                    [KeyboardButton(text="🔍 Проверить актив")],
+                    [KeyboardButton(text="🔙 Назад")]
+                ],
+                resize_keyboard=True
+            )
+
+            if approved_signals:
+                saved = self.signal_storage.save_signals_batch(approved_signals)
+                logger.info(f"Saved {saved} stock signals to storage")
+
+            if approved_signals:
+                await self._send_signals_to_group(approved_signals)
+
+                await self.bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        f"✅ <b>Анализ завершён</b>\n\n"
+                        f"Одобрено: {len(approved_signals)}\n"
+                        f"Отклонено: {len(rejected_signals)}\n\n"
+                        f"💾 Сигналы сохранены в signals/"
+                    ),
+                    reply_markup=stock_keyboard,
+                    parse_mode="HTML"
+                )
+            else:
+                await self.bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        f"⚠️ <b>Сигналов не найдено</b>\n\n"
+                        f"Отклонено: {len(rejected_signals)}"
+                    ),
+                    reply_markup=stock_keyboard,
+                    parse_mode="HTML"
+                )
+
+            if rejected_signals:
+                await self._send_rejected_signals(rejected_signals, user_id)
+
+            self._update_statistics(len(approved_signals), len(rejected_signals))
+
+        except Exception as e:
+            await self._stop_typing_indicator()
+            logger.exception("Error running stock analysis manually")
+
+            try:
+                from data_providers import cleanup_session
+                await cleanup_session()
+            except:
+                pass
+
+            # Клавиатура для возврата в меню Stock market
+            stock_keyboard = ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="▶️ Запустить сейчас (Stock)")],
+                    [KeyboardButton(text="🔍 Проверить актив")],
+                    [KeyboardButton(text="🔙 Назад")]
+                ],
+                resize_keyboard=True
+            )
+
+            await self.bot.send_message(
+                chat_id=user_id,
+                text=f"❌ <b>Ошибка:</b> {str(e)[:200]}",
+                reply_markup=stock_keyboard,
                 parse_mode="HTML"
             )
 
@@ -548,6 +997,16 @@ class TradingBotTelegram:
         if not self._is_authorized(user_id):
             return
 
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="📊 Статус")],
+                [KeyboardButton(text="📈 Статистика")],
+                [KeyboardButton(text="📊 Backtest")],
+                [KeyboardButton(text="🔙 Назад")]
+            ],
+            resize_keyboard=True
+        )
+
         try:
             await message.answer("⏳ <b>Запуск backtest...</b>", parse_mode="HTML")
 
@@ -557,6 +1016,7 @@ class TradingBotTelegram:
                 await message.answer(
                     "⚠️ <b>Нет сохранённых сигналов</b>\n\n"
                     "Запустите анализ чтобы создать сигналы для backtest",
+                    reply_markup=keyboard,
                     parse_mode="HTML"
                 )
                 return
@@ -572,10 +1032,11 @@ class TradingBotTelegram:
             from utils import format_backtest_report
             report = format_backtest_report(result)
 
-            await message.answer(report, parse_mode="HTML")
+            await message.answer(report, reply_markup=keyboard, parse_mode="HTML")
 
             await message.answer(
                 f"💾 Результаты сохранены в signals/backtest_results/",
+                reply_markup=keyboard,
                 parse_mode="HTML"
             )
 
@@ -583,6 +1044,7 @@ class TradingBotTelegram:
             logger.exception("Backtest error")
             await message.answer(
                 f"❌ <b>Ошибка backtest:</b> {str(e)[:200]}",
+                reply_markup=keyboard,
                 parse_mode="HTML"
             )
 
@@ -595,17 +1057,34 @@ class TradingBotTelegram:
         if not self._is_authorized(message.from_user.id):
             return
 
+        bot_status = "🛑 Остановлен" if self.bot_stopped else "✅ Активен"
+        scheduler_status = "⏸️ Остановлен" if self.bot_stopped else "▶️ Работает"
+        trading_status = "⏳ Выполняется" if self.trading_bot_running else "💤 Ожидание"
+
         status_text = (
             "📊 <b>Статус бота:</b>\n\n"
             f"⏰ Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
             f"👤 Пользователей: {len(self.user_ids)}\n"
             f"👥 Group ID: {self.group_id}\n"
-            f"🤖 Статус: Активен\n"
+            f"🤖 Бот: {bot_status}\n"
+            f"📅 Планировщик: {scheduler_status}\n"
+            f"🔄 Анализ: {trading_status}\n"
+        )
+
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="📊 Статус")],
+                [KeyboardButton(text="📈 Статистика")],
+                [KeyboardButton(text="📊 Backtest")],
+                [KeyboardButton(text="🔙 Назад")]
+            ],
+            resize_keyboard=True
         )
 
         await self.bot.send_message(
             chat_id=message.from_user.id,
             text=status_text,
+            reply_markup=keyboard,
             parse_mode="HTML"
         )
 
@@ -614,11 +1093,22 @@ class TradingBotTelegram:
         if not self._is_authorized(message.from_user.id):
             return
 
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="📊 Статус")],
+                [KeyboardButton(text="📈 Статистика")],
+                [KeyboardButton(text="📊 Backtest")],
+                [KeyboardButton(text="🔙 Назад")]
+            ],
+            resize_keyboard=True
+        )
+
         try:
             if not self.stats_file.exists():
                 await message.answer(
                     "⚠️ <b>Статистика недоступна</b>\n\n"
                     "Запустите анализ чтобы создать статистику",
+                    reply_markup=keyboard,
                     parse_mode="HTML"
                 )
                 return
@@ -636,12 +1126,13 @@ class TradingBotTelegram:
                 f"{stats.get('last_run', 'N/A')}"
             ]
 
-            await message.answer("\n".join(stats_text), parse_mode="HTML")
+            await message.answer("\n".join(stats_text), reply_markup=keyboard, parse_mode="HTML")
 
         except Exception as e:
             logger.exception("Error loading statistics")
             await message.answer(
                 "❌ <b>Ошибка загрузки статистики</b>",
+                reply_markup=keyboard,
                 parse_mode="HTML"
             )
 
@@ -677,9 +1168,25 @@ class TradingBotTelegram:
         if not self._is_authorized(message.from_user.id):
             return
 
+        # Останавливаем scheduler
+        if self.scheduler:
+            self.scheduler.stop()
+            logger.info("Scheduler stopped by user")
+
+        # Устанавливаем флаг остановки
+        self.bot_stopped = True
+
+        keyboard = self._get_main_menu_keyboard(message.from_user.id)
+
         await self.bot.send_message(
             chat_id=message.from_user.id,
-            text="🛑 <b>Бот остановлен.</b> Перезапустите для возобновления",
+            text=(
+                "🛑 <b>Бот остановлен</b>\n\n"
+                "✅ Автоматические запуски отключены\n"
+                "⚠️ Текущий анализ (если запущен) будет завершён\n\n"
+                "💡 Для возобновления работы используйте команду /start"
+            ),
+            reply_markup=keyboard,
             parse_mode="HTML"
         )
 
@@ -1336,33 +1843,7 @@ class TradingBotTelegram:
             return
 
         await state.clear()
-        
-        # Показываем главное меню
-        keyboard_buttons = [
-            [KeyboardButton(text="▶️ Запустить сейчас")],
-            [KeyboardButton(text="🔍 Анализ пары")],
-            [
-                KeyboardButton(text="📊 Статус"),
-                KeyboardButton(text="📈 Статистика")
-            ],
-            [KeyboardButton(text="📊 Backtest")],
-            [KeyboardButton(text="🛑 Остановить")]
-        ]
-        
-        if self._is_admin(user_id):
-            keyboard_buttons.append([KeyboardButton(text="⚙️ Админ-панель")])
-        
-        keyboard = ReplyKeyboardMarkup(
-            keyboard=keyboard_buttons,
-            resize_keyboard=True
-        )
-
-        await message.answer(
-            "🔙 <b>Главное меню</b>\n\n"
-            "Выберите действие:",
-            reply_markup=keyboard,
-            parse_mode="HTML"
-        )
+        await self._show_main_menu(message)
 
     async def start(self):
         """Запустить бота"""
@@ -1404,6 +1885,11 @@ class TradingBotTelegram:
         Args:
             bot: TradingBotTelegram объект (self)
         """
+        # Проверяем, не остановлен ли бот
+        if self.bot_stopped:
+            logger.info("Bot is stopped, skipping scheduled run")
+            return
+
         if self.trading_bot_running:
             logger.warning("Trading bot is already running, skipping scheduled run")
             return

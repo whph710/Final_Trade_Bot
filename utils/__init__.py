@@ -2,8 +2,7 @@
 Utils Package
 Файл: utils/__init__.py
 
-ОБНОВЛЕНО:
-- Добавлены signal_storage и backtesting
+Утилиты для работы бота
 """
 
 from .logger import setup_logger, get_logger
@@ -16,6 +15,7 @@ from .validators import (
 )
 from .signal_storage import SignalStorage, get_signal_storage
 from .backtesting import Backtester, get_backtester, format_backtest_report
+from .asset_detector import AssetTypeDetector
 
 __all__ = [
     # Logger
@@ -37,4 +37,7 @@ __all__ = [
     'Backtester',
     'get_backtester',
     'format_backtest_report',
+    
+    # Asset Detector
+    'AssetTypeDetector',
 ]

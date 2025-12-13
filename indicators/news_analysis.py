@@ -12,14 +12,15 @@ from datetime import datetime, timedelta, timezone
 logger = logging.getLogger(__name__)
 
 
-async def analyze_news(symbol: str) -> Dict:
+async def analyze_news(symbol: str, asset_type: str = 'auto') -> Dict:
     """
     Поиск и анализ новостей по активу за последние 72 часа (3 дня)
     
     Для swing trading на 1H/4H таймфреймах требуется более широкий контекст новостей.
     
     Args:
-        symbol: Тикер актива (например, 'BTCUSDT', 'TSLA', 'DOGEUSDT')
+        symbol: Тикер актива (например, 'BTCUSDT', 'TSLA', 'DOGEUSDT', 'SBER')
+        asset_type: Тип актива ('crypto', 'stock', 'auto'). Если 'auto', определяется автоматически
     
     Returns:
         Dict с ключами:
@@ -35,17 +36,32 @@ async def analyze_news(symbol: str) -> Dict:
     try:
         logger.info(f"🔍 News analysis: Starting search for {symbol}")
         
+        # Определяем тип актива
+        if asset_type == 'auto':
+            from utils.asset_detector import AssetTypeDetector
+            asset_type = AssetTypeDetector.detect(symbol)
+        
+        logger.debug(f"News analysis: Asset type detected: {asset_type} for {symbol}")
+        
         # Извлекаем базовый тикер (убираем USDT, USD и т.д.)
         base_symbol = _extract_base_symbol(symbol)
         logger.debug(f"News analysis: Base symbol extracted: {base_symbol} from {symbol}")
         
-        # Загружаем промпт
-        try:
-            prompt_template = load_prompt_cached("prompt_news.txt")
-            logger.debug("News analysis: Prompt loaded successfully")
-        except FileNotFoundError:
-            logger.warning("News prompt not found, using fallback")
-            prompt_template = _get_fallback_prompt()
+        # Загружаем соответствующий промпт
+        if asset_type == 'stock':
+            try:
+                prompt_template = load_prompt_cached("prompt_news_stocks.txt")
+                logger.debug("News analysis: Stock news prompt loaded successfully")
+            except FileNotFoundError:
+                logger.warning("Stock news prompt not found, using fallback")
+                prompt_template = _get_fallback_prompt_stocks()
+        else:  # crypto
+            try:
+                prompt_template = load_prompt_cached("prompt_news_crypto.txt")
+                logger.debug("News analysis: Crypto news prompt loaded successfully")
+            except FileNotFoundError:
+                logger.warning("Crypto news prompt not found, using fallback")
+                prompt_template = _get_fallback_prompt()
         
         # ✅ UTC время для промпта (72 часа = 3 дня для swing trading на 1H/4H)
         now_utc = datetime.now(timezone.utc)
@@ -60,7 +76,7 @@ async def analyze_news(symbol: str) -> Dict:
             hours_period=72
         )
         
-        logger.info(f"News analysis: Prompt prepared for {symbol} (searching from {date_72h_ago_utc.strftime('%Y-%m-%d %H:%M UTC')} to {now_utc.strftime('%Y-%m-%d %H:%M UTC')}, 72 hours)")
+        logger.debug(f"News analysis: Prompt prepared for {symbol}")
         
         # Получаем клиент ИИ (используем Stage 3 провайдер для новостей)
         ai_router = AIRouter()
@@ -80,20 +96,38 @@ async def analyze_news(symbol: str) -> Dict:
                 # ✅ DeepSeek с веб-поиском
                 # DeepSeek автоматически использует веб-поиск если в промпте явно указано
                 # Используем явное указание в system message для активации веб-поиска
-                system_message = (
-                    "You are a financial news analyst with access to web search. "
-                    "You MUST perform DEEP, COMPREHENSIVE search of the internet for recent news about the given asset. "
-                    "Use your web search capabilities to find real-time information from the last 72 hours (3 days). "
-                    "CRITICAL: Search not only for direct news about the asset, but also for: "
-                    "1) News about correlated assets (that move together), "
-                    "2) News about inverse-correlated assets (that move opposite), "
-                    "3) Market-wide context and sentiment, "
-                    "4) Sector/industry trends that might affect the asset. "
-                    "This is for swing trading analysis, so focus on news that affects medium-term price movements. "
-                    "Do NOT rely on your training data - actively search the web for current news. "
-                    "Do NOT be superficial - perform deep analysis of how news affects the asset and related markets. "
-                    "Respond in English language as most financial news sources are in English."
-                )
+                if asset_type == 'stock':
+                    system_message = (
+                        "You are a stock market news analyst with access to web search. "
+                        "You MUST perform DEEP, COMPREHENSIVE search of the internet for recent STOCK MARKET news about the given stock. "
+                        "Use your web search capabilities to find real-time information from the last 72 hours (3 days). "
+                        "CRITICAL: Focus ONLY on stock markets - ignore cryptocurrency, forex, commodities unless directly affecting stocks. "
+                        "Search not only for direct news about the stock, but also for: "
+                        "1) News about correlated markets (sector ETFs, S&P 500, NASDAQ), "
+                        "2) News about inverse-correlated assets (bonds, VIX, safe havens), "
+                        "3) Market-wide context and sentiment (S&P 500, sector trends, economic indicators), "
+                        "4) Sector-specific trends and industry dynamics. "
+                        "This is for stock swing trading analysis, so focus on news that affects medium-term stock price movements. "
+                        "Do NOT rely on your training data - actively search the web for current stock market news. "
+                        "Do NOT be superficial - perform deep analysis of how news affects the stock and related markets. "
+                        "Respond in English language as most stock market news sources are in English."
+                    )
+                else:  # crypto
+                    system_message = (
+                        "You are a cryptocurrency news analyst with access to web search. "
+                        "You MUST perform DEEP, COMPREHENSIVE search of the internet for recent CRYPTOCURRENCY news about the given crypto asset. "
+                        "Use your web search capabilities to find real-time information from the last 72 hours (3 days). "
+                        "CRITICAL: Focus ONLY on cryptocurrency markets - ignore stocks, forex, commodities unless directly affecting crypto. "
+                        "Search not only for direct news about the crypto asset, but also for: "
+                        "1) News about correlated crypto assets (that move together, e.g., BTC for alts, ETH for DeFi tokens), "
+                        "2) News about inverse-correlated assets (that move opposite, e.g., DXY for crypto), "
+                        "3) Crypto market-wide context and sentiment (BTC dominance, overall market trend), "
+                        "4) Cryptocurrency sector trends (DeFi, Layer 2, institutional adoption, regulatory clarity). "
+                        "This is for cryptocurrency swing trading analysis, so focus on news that affects medium-term crypto price movements. "
+                        "Do NOT rely on your training data - actively search the web for current cryptocurrency news. "
+                        "Do NOT be superficial - perform deep analysis of how news affects the crypto asset and related crypto markets. "
+                        "Respond in English language as most cryptocurrency news sources are in English."
+                    )
                 
                 response = await client.client.chat.completions.create(
                     model=client.model,
@@ -106,7 +140,7 @@ async def analyze_news(symbol: str) -> Dict:
                 )
                 
                 news_text = response.choices[0].message.content.strip()
-                logger.info(f"✅ News analysis: DeepSeek response received for {symbol} ({len(news_text)} chars)")
+                logger.debug(f"News analysis: Response received for {symbol} ({len(news_text)} chars)")
                 
             elif provider_name == 'claude':
                 # Claude использует свой API
@@ -127,11 +161,7 @@ async def analyze_news(symbol: str) -> Dict:
         # Парсим результат
         result = _parse_news_response(news_text, symbol)
         
-        logger.info(
-            f"News analysis complete for {symbol}: "
-            f"found={result['news_found']}, "
-            f"summary_length={len(result.get('news_summary', ''))}"
-        )
+        logger.debug(f"News analysis: {symbol} - found={result['news_found']}")
         
         return result
         
@@ -234,15 +264,36 @@ def _get_empty_news_result() -> Dict:
     }
 
 
+# Используем централизованный детектор
+# Функция удалена, используйте utils.asset_detector.AssetTypeDetector
+
+
 def _get_fallback_prompt() -> str:
-    """Fallback prompt if file not found"""
-    return """Find all recent news from the last 72 hours (3 days) regarding asset {symbol} ({full_symbol}) on the internet.
+    """Fallback prompt if file not found - cryptocurrency only"""
+    return """Find all recent cryptocurrency news from the last 72 hours (3 days) regarding crypto asset {symbol} ({full_symbol}) on the internet.
 
 IMPORTANT:
-- Search for news that may affect medium-term price movements (swing trading on 1H/4H)
-- Consider indirect connections (e.g., for DOGE - mentions of Elon Musk, for BTC - mentions of Tesla, SpaceX)
-- Provide a brief summary (2-4 sentences), concise but without losing the essence
-- If no news found, write "No news found"
+- Focus ONLY on cryptocurrency markets - ignore stocks, forex, commodities
+- Search for news that may affect medium-term crypto price movements (swing trading on 1H/4H)
+- Consider indirect connections (e.g., for DOGE - mentions of Elon Musk, for BTC - mentions of Tesla, MicroStrategy, Bitcoin ETF)
+- Search for news about correlated crypto assets (BTC for alts, ETH for DeFi tokens)
+- Provide a brief summary (3-6 sentences), concise but without losing the essence
+- If no news found, write "No cryptocurrency news found"
 
-Response format: Only summary text, without additional explanations. Use English language."""
+Response format: Only summary text, without additional explanations. Use English language. Focus on cryptocurrency markets only."""
+
+
+def _get_fallback_prompt_stocks() -> str:
+    """Fallback prompt if file not found - stocks only"""
+    return """Find all recent stock market news from the last 72 hours (3 days) regarding stock {symbol} ({full_symbol}) on the internet.
+
+IMPORTANT:
+- Focus ONLY on stock markets - ignore cryptocurrency, forex, commodities
+- Search for news that may affect medium-term stock price movements (swing trading on 1H/4H)
+- Consider indirect connections (earnings, corporate actions, analyst ratings, sector trends)
+- Search for news about correlated markets (sector ETFs, S&P 500, bonds, VIX)
+- Provide a brief summary (3-6 sentences), concise but without losing the essence
+- If no news found, write "No stock market news found"
+
+Response format: Only summary text, without additional explanations. Use English language. Focus on stock markets only."""
 

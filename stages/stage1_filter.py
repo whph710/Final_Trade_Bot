@@ -1,15 +1,13 @@
 """
-Stage 1: Signal Filtering - LEVELS + ATR Strategy (FIXED DISTANCE CHECK)
+Stage 1: Signal Filtering - FALSE BREAKOUT Strategy (Level-based)
 Файл: stages/stage1_filter.py
 
-✅ ИСПРАВЛЕНО:
-- Более строгий фильтр расстояния до уровня (< 1.5% вместо < 2%)
-- Проверка наличия уровня ДО scoring
-- Детальное логирование причин reject
+✅ ОБНОВЛЕНО: Стратегия "ложного пробоя" на основе уровней S/R
+Работает с таймфреймами 1H и 4H
 """
 
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -17,15 +15,13 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SignalCandidate:
-    """Кандидат сигнала после Stage 1"""
+    """Кандидат сигнала после Stage 1 (False Breakout Strategy)"""
     symbol: str
     direction: str
     confidence: int
-    sr_analysis: 'SupportResistanceAnalysis'
-    wave_analysis: 'WaveAnalysis'
-    ema200_context: dict
-    volume_analysis: 'VolumeAnalysis'
-    rsi_value: float
+    support_resistance_level: 'SupportResistanceLevel'  # Уровень S/R
+    false_breakout: 'FalseBreakoutSignal'
+    candle_pattern: Optional['BuyoutBar'] | Optional['SelloutBar']
     pattern_type: str
 
 
@@ -35,22 +31,26 @@ async def run_stage1(
         min_volume_ratio: Optional[float] = None
 ) -> List[SignalCandidate]:
     """
-    Stage 1: Фильтрация пар по стратегии Уровни + ATR
-
-    ✅ ИСПРАВЛЕНО: Строгий фильтр расстояния до уровня
+    Stage 1: Фильтрация пар по стратегии "Ложный пробой" (на основе уровней S/R)
+    
+    Алгоритм:
+    1. Поиск уровней поддержки/сопротивления
+    2. Проверка предпосылок для ЛП (дальний уровень, безоткатное движение, скорость подхода)
+    3. Детекция ложного пробоя (пробой + возврат за уровень)
+    4. Анализ объемов и волатильности
+    5. Подтверждение выкупным/продажным баром (опционально)
     """
     from data_providers import fetch_multiple_candles, normalize_candles
     from indicators import (
-        analyze_support_resistance,
-        analyze_waves_atr,
-        analyze_ema200,
-        analyze_volume,
-        calculate_rsi
+        find_support_resistance_levels,
+        detect_false_breakout,
+        detect_buyout_bar,
+        detect_sellout_bar
     )
     from config import config
     import time
 
-    # ✅ Используем значения из config если не указаны
+    # Используем значения из config если не указаны
     if min_confidence is None:
         min_confidence = config.MIN_CONFIDENCE
     if min_volume_ratio is None:
@@ -60,11 +60,17 @@ async def run_stage1(
         logger.warning("Stage 1: No pairs provided")
         return []
 
-    logger.info(f"Stage 1 (LEVELS+ATR): Analyzing {len(pairs)} pairs")
+    # Определяем тип активов для логирования
+    from utils.asset_detector import AssetTypeDetector
+    grouped = AssetTypeDetector.group_by_type(pairs)
+    stock_count = len(grouped['stock'])
+    crypto_count = len(grouped['crypto'])
+    
+    logger.info(f"Stage 1: Analyzing {len(pairs)} pairs ({stock_count} stocks, {crypto_count} crypto)")
+    
     start_time = time.time()
 
-    # Batch loading 4H candles
-    # ✅ Используем настройку из config
+    # Batch loading 4H candles (для консолидации нужен больший период)
     candles_limit = config.QUICK_SCAN_CANDLES
     requests = [
         {'symbol': symbol, 'interval': config.TIMEFRAME_LONG, 'limit': candles_limit}
@@ -73,176 +79,158 @@ async def run_stage1(
     batch_results = await fetch_multiple_candles(requests)
 
     load_time = time.time() - start_time
-    logger.info(f"Stage 1: Loaded {len(batch_results)}/{len(pairs)} pairs in {load_time:.1f}s")
+    logger.info(f"Stage 1: Loaded {len(batch_results)}/{len(pairs)} instruments in {load_time:.1f}s")
 
     if not batch_results:
         logger.warning("Stage 1: No valid candles loaded")
         return []
 
-    candidates = []
-    processed = 0
-    stats = {
-        'invalid': 0,
-        'no_levels': 0,
-        'level_too_far': 0,  # ✅ НОВАЯ КАТЕГОРИЯ
-        'low_confidence': 0,
-        'low_volume': 0,
-        'rsi_extreme': 0,
-        'overextension': 0
-    }
-
-    for result in batch_results:
+    # ✅ ОПТИМИЗИРОВАНО: Параллельная обработка пар
+    import asyncio
+    
+    async def process_single_pair(result: Dict) -> Optional[SignalCandidate]:
+        """Обработать одну пару асинхронно"""
         if not result.get('success'):
-            continue
-
+            return None
+        
         symbol = result['symbol']
         candles_raw = result['klines']
-
+        
         try:
-            processed += 1
             candles = normalize_candles(candles_raw, symbol=symbol, interval=config.TIMEFRAME_LONG)
-
+            
             if not candles or not candles.is_valid:
-                stats['invalid'] += 1
-                continue
-
+                return None
+            
+            # ============================================================
+            # ШАГ 1: Поиск уровней поддержки/сопротивления
+            # ============================================================
+            levels = find_support_resistance_levels(candles)
+            
+            if not levels:
+                return None
+            
+            # Ищем уровень, который был пробит (ближайший к текущей цене)
             current_price = float(candles.closes[-1])
-
+            relevant_level = None
+            
+            for level in levels:
+                # Проверяем, что уровень недавно был пробит
+                distance_pct = abs((current_price - level.price) / current_price * 100)
+                if distance_pct <= 3.0:  # В пределах 3% от текущей цены
+                    relevant_level = level
+                    break
+            
+            if not relevant_level:
+                return None
+            
             # ============================================================
-            # SUPPORT/RESISTANCE LEVELS (оптимизированные параметры)
+            # ШАГ 2: Детекция ложного пробоя уровня
             # ============================================================
-            sr_analysis = analyze_support_resistance(
+            false_breakout = detect_false_breakout(
                 candles,
-                current_price,
-                signal_direction='UNKNOWN'
+                relevant_level,
+                lookback_bars=config.FALSE_BREAKOUT_LOOKBACK_BARS,
+                max_breakout_bars=config.FALSE_BREAKOUT_MAX_BREAKOUT_BARS,
+                min_level_age_candles=config.FALSE_BREAKOUT_MIN_LEVEL_AGE_CANDLES
             )
-
-            if not sr_analysis or len(sr_analysis.all_levels) == 0:
-                stats['no_levels'] += 1
-                logger.debug(f"Stage 1: {symbol} - No S/R levels found")
-                continue
-
-            # ✅ КРИТИЧНО: Проверяем расстояние до ближайшего уровня ДО дальнейшего анализа
-            nearest_support = sr_analysis.nearest_support
-            nearest_resistance = sr_analysis.nearest_resistance
-
-            # Проверка для LONG: есть ли поддержка рядом
-            long_level_ok = (
-                nearest_support is not None and
-                nearest_support.distance_from_current_pct <= config.SR_LEVEL_MAX_DISTANCE_PCT
-            )
-
-            # Проверка для SHORT: есть ли сопротивление рядом
-            short_level_ok = (
-                nearest_resistance is not None and
-                nearest_resistance.distance_from_current_pct <= config.SR_LEVEL_MAX_DISTANCE_PCT
-            )
-
-            # Если НИ ТО НИ ТО - пропускаем
-            if not long_level_ok and not short_level_ok:
-                stats['level_too_far'] += 1
-
-                long_dist = nearest_support.distance_from_current_pct if nearest_support else 999
-                short_dist = nearest_resistance.distance_from_current_pct if nearest_resistance else 999
-
-                logger.debug(
-                    f"Stage 1: {symbol} - Levels too far "
-                    f"(support: {long_dist:.2f}%, resistance: {short_dist:.2f}%)"
+            
+            if not false_breakout or not false_breakout.is_valid:
+                return None
+            
+            # ============================================================
+            # ШАГ 3: Подтверждение выкупным/продажным баром (опционально)
+            # ============================================================
+            candle_pattern = None
+            pattern_type = 'FALSE_BREAKOUT'
+            
+            # Пытаемся найти подтверждающий паттерн, но не требуем его обязательно
+            if false_breakout.direction == 'LONG':
+                buyout_bar = detect_buyout_bar(
+                    candles,
+                    lookback_bars=config.CANDLE_PATTERN_LOOKBACK_BARS,
+                    min_lower_shadow_pct=config.BUYOUT_MIN_LOWER_SHADOW_PCT,
+                    min_close_near_high_pct=config.BUYOUT_MIN_CLOSE_NEAR_HIGH_PCT
                 )
-                continue
-
+                if buyout_bar and buyout_bar.is_valid:
+                    candle_pattern = buyout_bar
+                    pattern_type = 'FALSE_BREAKOUT_BUYOUT'
+            else:  # SHORT
+                sellout_bar = detect_sellout_bar(
+                    candles,
+                    lookback_bars=config.CANDLE_PATTERN_LOOKBACK_BARS,
+                    min_upper_shadow_pct=config.SELLOUT_MIN_UPPER_SHADOW_PCT,
+                    min_close_near_low_pct=config.SELLOUT_MIN_CLOSE_NEAR_LOW_PCT
+                )
+                if sellout_bar and sellout_bar.is_valid:
+                    candle_pattern = sellout_bar
+                    pattern_type = 'FALSE_BREAKOUT_SELLOUT'
+            
             # ============================================================
-            # ATR WAVE ANALYSIS
+            # ШАГ 4: Финальная проверка confidence
             # ============================================================
-            wave_analysis = analyze_waves_atr(candles, num_waves=config.WAVE_ANALYSIS_NUM_WAVES)
-
-            # ============================================================
-            # EMA200 CONTEXT
-            # ============================================================
-            ema200_context = analyze_ema200(candles)
-
-            # ============================================================
-            # VOLUME + RSI
-            # ============================================================
-            volume_analysis = analyze_volume(candles, window=config.VOLUME_WINDOW)
-            if not volume_analysis:
-                stats['invalid'] += 1
-                continue
-
-            if volume_analysis.volume_ratio_current < min_volume_ratio:
-                stats['low_volume'] += 1
-                continue
-
-            rsi_values = calculate_rsi(candles.closes, config.RSI_PERIOD)
-            current_rsi = float(rsi_values[-1])
-
-            # RSI блокировка только при ЭКСТРЕМАЛЬНЫХ значениях
-            if current_rsi > config.RSI_EXTREME_HIGH or current_rsi < config.RSI_EXTREME_LOW:
-                stats['rsi_extreme'] += 1
-                logger.debug(f"Stage 1: {symbol} skipped - RSI extreme ({current_rsi:.1f})")
-                continue
-
-            # ============================================================
-            # ОПРЕДЕЛЯЕМ НАПРАВЛЕНИЕ + CONFIDENCE
-            # ============================================================
-            direction, confidence, pattern_type, rejection_reason = _determine_level_signal(
-                sr_analysis, wave_analysis, ema200_context,
-                current_rsi, volume_analysis,
-                long_level_ok, short_level_ok  # ✅ Передаём флаги уровней
-            )
-
-            if direction == 'NONE':
-                if 'overextension' in rejection_reason.lower():
-                    stats['overextension'] += 1
-                elif 'too far' in rejection_reason.lower():
-                    stats['level_too_far'] += 1
-                else:
-                    stats['no_levels'] += 1
-
-                logger.debug(f"Stage 1: {symbol} - {rejection_reason}")
-                continue
-
+            confidence = false_breakout.confidence
+            
+            if candle_pattern and hasattr(candle_pattern, 'strength'):
+                pattern_bonus = int((candle_pattern.strength / 100.0) * config.CANDLE_PATTERN_STRENGTH_BONUS)
+                confidence = min(100, confidence + pattern_bonus)
+            
             if confidence < min_confidence:
-                stats['low_confidence'] += 1
-                logger.debug(f"Stage 1: {symbol} skipped (confidence {confidence} < {min_confidence})")
-                continue
-
+                return None
+            
             # ============================================================
             # СОЗДАЁМ КАНДИДАТА
             # ============================================================
             candidate = SignalCandidate(
                 symbol=symbol,
-                direction=direction,
+                direction=false_breakout.direction,
                 confidence=confidence,
-                sr_analysis=sr_analysis,
-                wave_analysis=wave_analysis,
-                ema200_context=ema200_context,
-                volume_analysis=volume_analysis,
-                rsi_value=current_rsi,
+                support_resistance_level=relevant_level,
+                false_breakout=false_breakout,
+                candle_pattern=candle_pattern,
                 pattern_type=pattern_type
             )
-
-            candidates.append(candidate)
-
-            # Детальное логирование для отладки
-            level_dist = (
-                sr_analysis.nearest_support.distance_from_current_pct
-                if direction == 'LONG' and sr_analysis.nearest_support
-                else sr_analysis.nearest_resistance.distance_from_current_pct
-                if direction == 'SHORT' and sr_analysis.nearest_resistance
-                else 0
+            
+            logger.debug(
+                f"Stage 1: ✓ {symbol} {false_breakout.direction} "
+                f"(conf: {confidence}%, {pattern_type})"
             )
-
-            logger.info(
-                f"Stage 1: ✓ {symbol} {direction} "
-                f"(confidence: {confidence}%, pattern: {pattern_type}, "
-                f"level_distance: {level_dist:.2f}%)"
-            )
-
+            
+            return candidate
+            
         except Exception as e:
             logger.debug(f"Stage 1: Error processing {symbol}: {e}")
+            return None
+    
+    # Параллельная обработка всех пар
+    tasks = [process_single_pair(result) for result in batch_results]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Собираем результаты и статистику
+    candidates = []
+    processed = 0
+    stats = {
+        'invalid': 0,
+        'no_channel': 0,
+        'channel_too_short': 0,
+        'no_breakout': 0,
+        'no_candle_pattern': 0,
+        'low_confidence': 0,
+        'low_volume': 0
+    }
+    
+    for result in results:
+        if isinstance(result, Exception):
             stats['invalid'] += 1
             continue
+        
+        if result is None:
+            # Подсчитываем статистику (упрощенно, так как детали теряются при параллельной обработке)
+            stats['no_channel'] += 1
+            continue
+        
+        candidates.append(result)
+        processed += 1
 
     # Сортируем по confidence
     candidates.sort(key=lambda x: x.confidence, reverse=True)
@@ -250,257 +238,16 @@ async def run_stage1(
 
     # СТАТИСТИКА
     logger.info("=" * 70)
-    logger.info("STAGE 1 (LEVELS+ATR) COMPLETE")
+    logger.info(f"STAGE 1 COMPLETE")
     logger.info("=" * 70)
-    logger.info(f"Total time: {total_time:.1f}s")
-    logger.info(f"Processed: {processed} pairs")
-    logger.info(f"✅ Signals found: {len(candidates)}")
-    logger.info(f"❌ Skipped breakdown:")
-    logger.info(f"   • Invalid data: {stats['invalid']}")
-    logger.info(f"   • No S/R levels: {stats['no_levels']}")
-    logger.info(f"   • Level too far (>{config.SR_LEVEL_MAX_DISTANCE_PCT}%): {stats['level_too_far']}")  # ✅ НОВОЕ
-    logger.info(f"   • Low confidence: {stats['low_confidence']}")
-    logger.info(f"   • Low volume: {stats['low_volume']}")
-    logger.info(f"   • RSI extreme: {stats['rsi_extreme']}")
-    logger.info(f"   • Overextension: {stats['overextension']}")
+    logger.info(f"Time: {total_time:.1f}s | Processed: {processed} | Signals: {len(candidates)}")
+    if stats['invalid'] + stats['no_channel'] > 0:
+        logger.info(f"Skipped: invalid={stats['invalid']}, no_levels={stats['no_channel']}")
 
     if candidates:
-        logger.info(f"\n📊 Pattern distribution:")
-        pattern_counts = {}
-        for c in candidates:
-            pattern_counts[c.pattern_type] = pattern_counts.get(c.pattern_type, 0) + 1
-
-        for pattern, count in sorted(pattern_counts.items(), key=lambda x: x[1], reverse=True):
-            logger.info(f"   • {pattern}: {count}")
-
-        logger.info(f"\nTop 10 candidates:")
-        for i, c in enumerate(candidates[:10], 1):
-            level_dist = (
-                c.sr_analysis.nearest_support.distance_from_current_pct
-                if c.direction == 'LONG' and c.sr_analysis.nearest_support
-                else c.sr_analysis.nearest_resistance.distance_from_current_pct
-                if c.direction == 'SHORT' and c.sr_analysis.nearest_resistance
-                else 0
-            )
-            logger.info(
-                f"  {i}. {c.symbol} {c.direction} "
-                f"(conf: {c.confidence}%, {c.pattern_type}, dist: {level_dist:.2f}%)"
-            )
-
-    logger.info("=" * 70)
+        # Логируем топ-5 кандидатов
+        logger.info(f"Top candidates:")
+        for i, c in enumerate(candidates[:5], 1):
+            logger.info(f"  {i}. {c.symbol} {c.direction} (conf: {c.confidence}%)")
 
     return candidates
-
-
-def _determine_level_signal(
-        sr_analysis: 'SupportResistanceAnalysis',
-        wave_analysis: 'WaveAnalysis',
-        ema200_context: dict,
-        rsi: float,
-        volume_analysis: 'VolumeAnalysis',
-        long_level_ok: bool,  # ✅ НОВЫЙ ПАРАМЕТР
-        short_level_ok: bool  # ✅ НОВЫЙ ПАРАМЕТР
-) -> tuple[str, int, str, str]:
-    """
-    Определить сигнал на основе уровней + ATR
-
-    ✅ ИСПРАВЛЕНО: Учитываем флаги long_level_ok/short_level_ok
-    """
-    from config import config
-
-    MIN_SCORE = config.STAGE1_MIN_SCORE
-
-    # ============================================================
-    # БЫЧИЙ ПАТТЕРН (LONG)
-    # ============================================================
-    bullish_score = 0
-    bullish_details = []
-
-    if long_level_ok:  # ✅ Проверяем флаг ПЕРЕД скорингом
-        nearest_support = sr_analysis.nearest_support
-
-        # Качество уровня
-        if nearest_support.touches >= config.SR_LEVEL_TOUCHES_PREMIUM:
-            bullish_score += config.SR_TOUCHES_PREMIUM_SCORE
-            bullish_details.append(f"Premium support ({nearest_support.touches} touches)")
-        elif nearest_support.touches >= config.SR_LEVEL_TOUCHES_STRONG:
-            bullish_score += config.SR_TOUCHES_STRONG_SCORE
-            bullish_details.append(f"Strong support ({nearest_support.touches} touches)")
-        elif nearest_support.touches >= config.SR_LEVEL_TOUCHES_VALID:
-            bullish_score += config.SR_TOUCHES_VALID_SCORE
-            bullish_details.append(f"Valid support ({nearest_support.touches} touches)")
-
-        # Расстояние до уровня (ужесточено)
-        distance = nearest_support.distance_from_current_pct
-        if distance < config.SR_LEVEL_IDEAL_DISTANCE_PCT:
-            bullish_score += config.SR_DISTANCE_IDEAL_SCORE
-            bullish_details.append(f"Ideal entry (<{config.SR_LEVEL_IDEAL_DISTANCE_PCT}%)")
-        elif distance < config.SR_LEVEL_NEAR_DISTANCE_PCT:
-            bullish_score += config.SR_DISTANCE_GOOD_SCORE
-            bullish_details.append(f"Good entry (<{config.SR_LEVEL_NEAR_DISTANCE_PCT}%)")
-        elif distance < config.SR_LEVEL_MAX_DISTANCE_PCT:
-            bullish_score += config.SR_DISTANCE_ACCEPTABLE_SCORE
-            bullish_details.append(f"Acceptable entry (<{config.SR_LEVEL_MAX_DISTANCE_PCT}%)")
-        else:
-            bullish_details.append(f"Too far from support ({distance:.1f}%)")
-
-    # ATR Wave Analysis
-    if wave_analysis:
-        if wave_analysis.wave_type == 'BULLISH':
-            if wave_analysis.is_early_entry:
-                bullish_score += config.WAVE_EARLY_ENTRY_SCORE
-                bullish_details.append(f"Early entry ({wave_analysis.current_wave_progress:.0f}% of ATR)")
-            elif wave_analysis.current_wave_progress < config.WAVE_GOOD_ENTRY_THRESHOLD:
-                bullish_score += config.WAVE_GOOD_ENTRY_SCORE
-                bullish_details.append(f"Good entry ({wave_analysis.current_wave_progress:.0f}% of ATR)")
-            elif wave_analysis.current_wave_progress < config.WAVE_LATE_ENTRY_THRESHOLD:
-                bullish_score += config.WAVE_LATE_ENTRY_SCORE
-            else:
-                bullish_score += config.WAVE_TOO_LATE_PENALTY
-                bullish_details.append(f"Late entry ({wave_analysis.current_wave_progress:.0f}%)")
-
-    # EMA200 alignment
-    if ema200_context['price_above_ema200']:
-        bullish_score += config.EMA200_ALIGNMENT_BONUS
-        bullish_details.append("Above EMA200 (bullish trend)")
-
-        # Проверка overextension
-        distance_ema = ema200_context['distance_pct']
-        if distance_ema > config.EMA200_OVEREXTENDED_PCT:
-            bullish_score += config.EMA200_OVEREXTENDED_PENALTY
-            bullish_details.append(f"OVEREXTENDED from EMA200 ({distance_ema:.1f}%)")
-        elif distance_ema > config.EMA200_EXTENDED_PCT:
-            bullish_score += config.EMA200_EXTENDED_PENALTY
-
-    # RSI optimal
-    if config.RSI_OPTIMAL_LONG_MIN <= rsi <= config.RSI_OPTIMAL_LONG_MAX:
-        bullish_score += config.RSI_OPTIMAL_BONUS
-    elif rsi > config.RSI_OVERBOUGHT:
-        bullish_score += config.RSI_EXTREME_PENALTY
-
-    # Volume
-    vol_ratio = volume_analysis.volume_ratio_current
-    if vol_ratio > config.VOLUME_SPIKE_THRESHOLD:
-        bullish_score += config.VOLUME_SPIKE_SCORE
-        bullish_details.append(f"Strong volume ({vol_ratio:.1f}x)")
-    elif vol_ratio > config.VOLUME_STRONG_THRESHOLD:
-        bullish_score += config.VOLUME_STRONG_SCORE
-    elif vol_ratio > config.VOLUME_GOOD_THRESHOLD:
-        bullish_score += config.VOLUME_GOOD_SCORE
-
-    # ============================================================
-    # МЕДВЕЖИЙ ПАТТЕРН (SHORT)
-    # ============================================================
-    bearish_score = 0
-    bearish_details = []
-
-    if short_level_ok:  # ✅ Проверяем флаг ПЕРЕД скорингом
-        nearest_resistance = sr_analysis.nearest_resistance
-
-        # Качество уровня
-        if nearest_resistance.touches >= config.SR_LEVEL_TOUCHES_PREMIUM:
-            bearish_score += config.SR_TOUCHES_PREMIUM_SCORE
-            bearish_details.append(f"Premium resistance ({nearest_resistance.touches} touches)")
-        elif nearest_resistance.touches >= config.SR_LEVEL_TOUCHES_STRONG:
-            bearish_score += config.SR_TOUCHES_STRONG_SCORE
-            bearish_details.append(f"Strong resistance ({nearest_resistance.touches} touches)")
-        elif nearest_resistance.touches >= config.SR_LEVEL_TOUCHES_VALID:
-            bearish_score += config.SR_TOUCHES_VALID_SCORE
-            bearish_details.append(f"Valid resistance ({nearest_resistance.touches} touches)")
-
-        # Расстояние до уровня (ужесточено)
-        distance = nearest_resistance.distance_from_current_pct
-        if distance < config.SR_LEVEL_IDEAL_DISTANCE_PCT:
-            bearish_score += config.SR_DISTANCE_IDEAL_SCORE
-            bearish_details.append(f"Ideal entry (<{config.SR_LEVEL_IDEAL_DISTANCE_PCT}%)")
-        elif distance < config.SR_LEVEL_NEAR_DISTANCE_PCT:
-            bearish_score += config.SR_DISTANCE_GOOD_SCORE
-            bearish_details.append(f"Good entry (<{config.SR_LEVEL_NEAR_DISTANCE_PCT}%)")
-        elif distance < config.SR_LEVEL_MAX_DISTANCE_PCT:
-            bearish_score += config.SR_DISTANCE_ACCEPTABLE_SCORE
-            bearish_details.append(f"Acceptable entry (<{config.SR_LEVEL_MAX_DISTANCE_PCT}%)")
-        else:
-            bearish_details.append(f"Too far from resistance ({distance:.1f}%)")
-
-    # ATR Wave Analysis
-    if wave_analysis:
-        if wave_analysis.wave_type == 'BEARISH':
-            if wave_analysis.is_early_entry:
-                bearish_score += config.WAVE_EARLY_ENTRY_SCORE
-                bearish_details.append(f"Early entry ({wave_analysis.current_wave_progress:.0f}% of ATR)")
-            elif wave_analysis.current_wave_progress < config.WAVE_GOOD_ENTRY_THRESHOLD:
-                bearish_score += config.WAVE_GOOD_ENTRY_SCORE
-                bearish_details.append(f"Good entry ({wave_analysis.current_wave_progress:.0f}% of ATR)")
-            elif wave_analysis.current_wave_progress < config.WAVE_LATE_ENTRY_THRESHOLD:
-                bearish_score += config.WAVE_LATE_ENTRY_SCORE
-            else:
-                bearish_score += config.WAVE_TOO_LATE_PENALTY
-                bearish_details.append(f"Late entry ({wave_analysis.current_wave_progress:.0f}%)")
-
-    # EMA200 alignment
-    if not ema200_context['price_above_ema200']:
-        bearish_score += config.EMA200_ALIGNMENT_BONUS
-        bearish_details.append("Below EMA200 (bearish trend)")
-
-        # Проверка overextension
-        distance_ema = ema200_context['distance_pct']
-        if distance_ema > config.EMA200_OVEREXTENDED_PCT:
-            bearish_score += config.EMA200_OVEREXTENDED_PENALTY
-            bearish_details.append(f"OVEREXTENDED from EMA200 ({distance_ema:.1f}%)")
-        elif distance_ema > config.EMA200_EXTENDED_PCT:
-            bearish_score += config.EMA200_EXTENDED_PENALTY
-
-    # RSI optimal
-    if config.RSI_OPTIMAL_SHORT_MIN <= rsi <= config.RSI_OPTIMAL_SHORT_MAX:
-        bearish_score += config.RSI_OPTIMAL_BONUS
-    elif rsi < config.RSI_OVERSOLD:
-        bearish_score += config.RSI_EXTREME_PENALTY
-
-    # Volume
-    if vol_ratio > config.VOLUME_SPIKE_THRESHOLD:
-        bearish_score += config.VOLUME_SPIKE_SCORE
-        bearish_details.append(f"Strong volume ({vol_ratio:.1f}x)")
-    elif vol_ratio > config.VOLUME_STRONG_THRESHOLD:
-        bearish_score += config.VOLUME_STRONG_SCORE
-    elif vol_ratio > config.VOLUME_GOOD_THRESHOLD:
-        bearish_score += config.VOLUME_GOOD_SCORE
-
-    # ============================================================
-    # РЕШЕНИЕ
-    # ============================================================
-
-    if bullish_score < MIN_SCORE and bearish_score < MIN_SCORE:
-        return 'NONE', 0, 'NO_PATTERN', f'Both scores below minimum: L={bullish_score}, S={bearish_score}'
-
-    if bullish_score >= MIN_SCORE and bearish_score >= MIN_SCORE:
-        score_diff = abs(bullish_score - bearish_score)
-        if score_diff < config.STAGE1_CONFLICTING_SCORE_DIFF:
-            return 'NONE', 0, 'CONFLICTING', f'Both strong (L:{bullish_score}, S:{bearish_score})'
-
-    if bullish_score > bearish_score:
-        direction = 'LONG'
-        confidence = min(config.STAGE1_MAX_CONFIDENCE, config.STAGE1_BASE_CONFIDENCE + bullish_score)
-
-        if bullish_score >= config.STAGE1_PERFECT_PATTERN_SCORE:
-            pattern_type = 'PERFECT_LEVEL'
-        elif bullish_score >= config.STAGE1_STRONG_PATTERN_SCORE:
-            pattern_type = 'STRONG_LEVEL'
-        else:
-            pattern_type = 'MODERATE_LEVEL'
-
-        logger.debug(f"LONG signal: score={bullish_score}, details={bullish_details}")
-
-    else:
-        direction = 'SHORT'
-        confidence = min(config.STAGE1_MAX_CONFIDENCE, config.STAGE1_BASE_CONFIDENCE + bearish_score)
-
-        if bearish_score >= config.STAGE1_PERFECT_PATTERN_SCORE:
-            pattern_type = 'PERFECT_LEVEL'
-        elif bearish_score >= config.STAGE1_STRONG_PATTERN_SCORE:
-            pattern_type = 'STRONG_LEVEL'
-        else:
-            pattern_type = 'MODERATE_LEVEL'
-
-        logger.debug(f"SHORT signal: score={bearish_score}, details={bearish_details}")
-
-    return direction, confidence, pattern_type, ''

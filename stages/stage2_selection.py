@@ -27,18 +27,14 @@ async def run_stage2(
     import time
 
     if not candidates:
-        logger.warning("Stage 2 (ENHANCED): No candidates provided")
+        logger.warning("Stage 2: No candidates provided")
         return []
 
-    logger.info(
-        f"Stage 2 (ENHANCED): Selecting from {len(candidates)} candidates "
-        f"(max: {max_pairs}) with full historical data"
-    )
+    logger.info(f"Stage 2: Selecting from {len(candidates)} candidates (max: {max_pairs})")
 
     start_time = time.time()
 
-    # Загрузка 1H + 4H свечей (увеличено для истории)
-    logger.info(f"Stage 2: Loading 1H + 4H candles for {len(candidates)} pairs...")
+    logger.debug(f"Stage 2: Loading candles for {len(candidates)} pairs...")
 
     requests = []
     for candidate in candidates:
@@ -59,10 +55,7 @@ async def run_stage2(
     batch_results = await fetch_multiple_candles(requests)
 
     load_time = time.time() - start_time
-    logger.info(
-        f"Stage 2: Loaded {len(batch_results)}/{len(requests)} requests "
-        f"in {load_time:.1f}s"
-    )
+    logger.debug(f"Stage 2: Loaded {len(batch_results)}/{len(requests)} in {load_time:.1f}s")
 
     # Группируем по символам
     candles_by_symbol = _group_candles_by_symbol(batch_results)
@@ -117,8 +110,18 @@ async def run_stage2(
                 failed_symbols.append((symbol, "Indicators failed"))
                 continue
 
-            # ✅ НОВОЕ: Подготовка levels data с ИСТОРИЕЙ
-            levels_data = _prepare_levels_data_with_history(candidate, candles_4h)
+            # ✅ АДАПТИРОВАНО: Подготовка levels data с ИСТОРИЕЙ для новой стратегии
+            levels_data = _prepare_levels_data_with_history_false_breakout(candidate, candles_4h)
+
+            # Вычисляем volume и RSI для контекста
+            from indicators import calculate_volume_ratio, calculate_rsi, analyze_volume
+            from config import config
+            
+            volume_analysis = analyze_volume(candles_4h, window=config.VOLUME_WINDOW)
+            volume_ratio = volume_analysis.volume_ratio_current if volume_analysis else 1.0
+            
+            rsi_values = calculate_rsi(candles_4h.closes, config.RSI_PERIOD)
+            rsi_value = float(rsi_values[-1]) if len(rsi_values) > 0 else 50.0
 
             # Формируем данные для AI
             ai_input_data.append({
@@ -134,9 +137,14 @@ async def run_stage2(
                 'sr_history': levels_data['sr_history'],
                 'ema200_history': levels_data['ema200_history'],
 
+                # ✅ НОВОЕ: Данные стратегии ложного пробоя
+                'support_resistance_level': levels_data['support_resistance_level'],
+                'false_breakout': levels_data['false_breakout'],
+                'candle_pattern': levels_data['candle_pattern'],
+
                 # Context
-                'volume_ratio': candidate.volume_analysis.volume_ratio_current,
-                'rsi_value': candidate.rsi_value,
+                'volume_ratio': volume_ratio,
+                'rsi_value': rsi_value,
 
                 # Multi-TF data (последние 30 свечей для компактности)
                 'candles_1h': _extract_last_candles(candles_1h_raw, 30),
@@ -147,7 +155,7 @@ async def run_stage2(
                 'indicators_4h': indicators_4h
             })
 
-            logger.info(f"Stage 2: ✓ {symbol} prepared with full history")
+            logger.debug(f"Stage 2: ✓ {symbol} prepared")
 
         except Exception as e:
             logger.error(f"Stage 2: {symbol} ERROR - {e}", exc_info=False)
@@ -156,33 +164,16 @@ async def run_stage2(
 
     prep_time = time.time() - start_time
 
-    # Логирование результатов
-    logger.info("=" * 70)
-    logger.info(f"Stage 2: Data preparation complete")
-    logger.info(f"  • Successfully prepared: {len(ai_input_data)}/{len(candidates)}")
-    logger.info(f"  • Failed: {len(failed_symbols)}/{len(candidates)}")
-    logger.info(f"  • Preparation time: {prep_time:.1f}s")
-
-    if failed_symbols and len(failed_symbols) <= 10:
-        logger.info(f"\nFailed symbols:")
+    logger.info(f"Stage 2: Prepared {len(ai_input_data)}/{len(candidates)} (failed: {len(failed_symbols)}, time: {prep_time:.1f}s)")
+    if failed_symbols and len(failed_symbols) <= 5:
         for sym, reason in failed_symbols:
-            logger.info(f"  • {sym}: {reason}")
-    elif failed_symbols:
-        logger.info(f"\nShowing first 10 failed symbols:")
-        for sym, reason in failed_symbols[:10]:
-            logger.info(f"  • {sym}: {reason}")
-        logger.info(f"  ... and {len(failed_symbols) - 10} more")
-
-    logger.info("=" * 70)
+            logger.debug(f"Stage 2: Failed {sym}: {reason}")
 
     if not ai_input_data:
         logger.error("Stage 2: No valid AI input data - CRITICAL FAILURE")
         return []
 
-    logger.info(
-        f"Stage 2: Sending {len(ai_input_data)} pairs to AI "
-        f"(provider: {config.STAGE2_PROVIDER}) with FULL HISTORY"
-    )
+    logger.debug(f"Stage 2: Sending {len(ai_input_data)} pairs to AI ({config.STAGE2_PROVIDER})")
 
     # Вызов AI
     ai_router = AIRouter()
@@ -193,69 +184,81 @@ async def run_stage2(
     )
 
     total_time = time.time() - start_time
-
-    logger.info(
-        f"Stage 2 complete: AI selected {len(selected_pairs)} pairs "
-        f"(total time: {total_time:.1f}s)"
-    )
-
+    logger.info(f"Stage 2: Selected {len(selected_pairs)} pairs (time: {total_time:.1f}s)")
     if selected_pairs:
-        logger.info(f"Selected: {selected_pairs}")
-    else:
-        logger.warning("Stage 2: AI selected 0 pairs")
+        logger.info(f"Selected: {', '.join(selected_pairs)}")
 
     return selected_pairs
 
 
-def _prepare_levels_data_with_history(
+def _prepare_levels_data_with_history_false_breakout(
         candidate: 'SignalCandidate',
         candles_4h: 'NormalizedCandles'
 ) -> Dict:
     """
-    ✅ НОВОЕ: Подготовить данные уровней + ATR + EMA200 с ИСТОРИЕЙ
+    ✅ АДАПТИРОВАНО: Подготовить данные для стратегии ложного пробоя
     """
-    from indicators import analyze_ema200
+    from indicators import (
+        analyze_support_resistance,
+        analyze_waves_atr,
+        analyze_ema200
+    )
+    from config import config
 
-    # Support/Resistance (текущие + история уровней)
+    current_price = float(candles_4h.closes[-1])
+
+    # Support/Resistance - вычисляем на основе канала консолидации
+    sr_analysis = analyze_support_resistance(
+        candles_4h,
+        current_price,
+        signal_direction=candidate.direction
+    )
+
     sr_data = {
-        'total_levels': len(candidate.sr_analysis.all_levels),
-        'current_zone': candidate.sr_analysis.current_price_zone
+        'total_levels': len(sr_analysis.all_levels) if sr_analysis else 0,
+        'current_zone': sr_analysis.current_price_zone if sr_analysis else 'UNKNOWN'
     }
 
-    nearest_support = candidate.sr_analysis.nearest_support
-    if nearest_support:
-        sr_data['nearest_support'] = {
-            'price': nearest_support.price,
-            'touches': nearest_support.touches,
-            'strength': nearest_support.strength,
-            'distance_pct': nearest_support.distance_from_current_pct
-        }
+    if sr_analysis:
+        nearest_support = sr_analysis.nearest_support
+        if nearest_support:
+            sr_data['nearest_support'] = {
+                'price': nearest_support.price,
+                'touches': nearest_support.touches,
+                'strength': nearest_support.strength,
+                'distance_pct': nearest_support.distance_from_current_pct
+            }
+        else:
+            sr_data['nearest_support'] = None
+
+        nearest_resistance = sr_analysis.nearest_resistance
+        if nearest_resistance:
+            sr_data['nearest_resistance'] = {
+                'price': nearest_resistance.price,
+                'touches': nearest_resistance.touches,
+                'strength': nearest_resistance.strength,
+                'distance_pct': nearest_resistance.distance_from_current_pct
+            }
+        else:
+            sr_data['nearest_resistance'] = None
+
+        # История уровней S/R
+        sr_history = _extract_sr_levels_history(sr_analysis, candles_4h)
     else:
         sr_data['nearest_support'] = None
-
-    nearest_resistance = candidate.sr_analysis.nearest_resistance
-    if nearest_resistance:
-        sr_data['nearest_resistance'] = {
-            'price': nearest_resistance.price,
-            'touches': nearest_resistance.touches,
-            'strength': nearest_resistance.strength,
-            'distance_pct': nearest_resistance.distance_from_current_pct
-        }
-    else:
         sr_data['nearest_resistance'] = None
+        sr_history = []
 
-    # ✅ НОВОЕ: История уровней S/R (последние 50 свечей)
-    sr_history = _extract_sr_levels_history(candidate.sr_analysis, candles_4h)
-
-    # Wave Analysis (текущая + история волн)
-    wave_data = {}
-    if candidate.wave_analysis:
+    # Wave Analysis - вычисляем ATR волны
+    wave_analysis = analyze_waves_atr(candles_4h, num_waves=config.WAVE_ANALYSIS_NUM_WAVES)
+    
+    if wave_analysis:
         wave_data = {
-            'wave_type': candidate.wave_analysis.wave_type,
-            'average_wave_length': candidate.wave_analysis.average_wave_length,
-            'current_progress': candidate.wave_analysis.current_wave_progress,
-            'is_early_entry': candidate.wave_analysis.is_early_entry,
-            'wave_lengths': candidate.wave_analysis.wave_lengths  # ✅ История волн
+            'wave_type': wave_analysis.wave_type,
+            'average_wave_length': wave_analysis.average_wave_length,
+            'current_progress': wave_analysis.current_wave_progress,
+            'is_early_entry': wave_analysis.is_early_entry,
+            'wave_lengths': wave_analysis.wave_lengths if hasattr(wave_analysis, 'wave_lengths') else []
         }
     else:
         wave_data = {
@@ -266,19 +269,63 @@ def _prepare_levels_data_with_history(
             'wave_lengths': []
         }
 
-    # EMA200 Context (текущий + история)
-    ema200_data = candidate.ema200_context
+    # EMA200 Context
+    ema200_context = analyze_ema200(candles_4h)
 
-    # ✅ НОВОЕ: История EMA200 (последние 50 баров)
+    # История EMA200
     ema200_history = _extract_ema200_history(candles_4h)
+
+    # Данные уровня S/R
+    level = candidate.support_resistance_level
+    support_resistance_level_data = {
+        'price': level.price,
+        'level_type': level.level_type,
+        'touches': level.touches,
+        'strength': level.strength,
+        'distance_from_current_pct': level.distance_from_current_pct
+    }
+
+    # Данные ложного пробоя
+    false_breakout = candidate.false_breakout
+    false_breakout_data = {
+        'direction': false_breakout.direction,
+        'breakout_direction': false_breakout.breakout_direction,
+        'breakout_type': false_breakout.breakout_type,
+        'level_price': false_breakout.level_price,
+        'level_type': false_breakout.level_type,
+        'breakout_depth_pct': false_breakout.breakout_depth_pct,
+        'tail_size_pct': false_breakout.tail_size_pct,
+        'stop_loss': false_breakout.stop_loss,
+        'volume_spike_ratio': false_breakout.volume_spike_ratio,
+        'volatility_spike': false_breakout.volatility_spike,
+        'entry_index': false_breakout.entry_index,
+        'confidence': false_breakout.confidence,
+        'details': false_breakout.details
+    }
+
+    # Данные свечного паттерна
+    candle_pattern_data = None
+    if candidate.candle_pattern:
+        pattern = candidate.candle_pattern
+        candle_pattern_data = {
+            'type': 'BUYOUT' if hasattr(pattern, 'close_near_high_pct') else 'SELLOUT',
+            'strength': pattern.strength if hasattr(pattern, 'strength') else 0,
+            'index': pattern.index if hasattr(pattern, 'index') else -1
+        }
 
     return {
         'sr_analysis': sr_data,
         'wave_analysis': wave_data,
-        'ema200_context': ema200_data,
+        'ema200_context': ema200_context,
         'sr_history': sr_history,
-        'ema200_history': ema200_history
+        'ema200_history': ema200_history,
+        'support_resistance_level': support_resistance_level_data,
+        'false_breakout': false_breakout_data,
+        'candle_pattern': candle_pattern_data
     }
+
+
+# LEGACY функция удалена - используйте _prepare_levels_data_with_history_false_breakout
 
 
 def _extract_sr_levels_history(sr_analysis, candles) -> List[Dict]:

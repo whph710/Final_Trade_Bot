@@ -1,0 +1,50 @@
+{
+  "symbol": "VSEH",
+  "signal": "LONG",
+  "confidence": 72,
+  "entry_price": 69.99,
+  "stop_loss": 68.65,
+  "take_profit_levels": [
+    70.86,
+    71.73,
+    72.6
+  ],
+  "risk_reward_ratio": 1.3,
+  "analysis": "LONG: Уровень поддержки с 4 касаниями (STRONG), не тестировался 30 свечей (STRONG). Ложный пробой вниз типа SIMPLE на 1.8% с возвратом за 2 бара (идеально). Всплеск объема 2.3x и волатильности 1.6x (подтверждение манипуляции). Безоткатное движение к уровню на больших барах (накопление энергии). Оценка: 90/125.",
+  "timestamp": "2025-12-13T15:36:32.282521",
+  "backtest_status": "NOT_CHECKED",
+  "backtest_result": null,
+  "comprehensive_data": {
+    "current_price": 69.99,
+    "indicators_1h": {
+      "price": 69.99,
+      "ema9": 70.04609407549503,
+      "ema21": 70.20311086479308,
+      "ema50": 70.38147061695982,
+      "rsi": 44.37503760673592,
+      "volume_ratio": 0.03409621451847939
+    },
+    "indicators_4h": {
+      "price": 69.99,
+      "ema9": 70.18056754493034,
+      "ema21": 70.3346116219014,
+      "ema50": 70.26135362969765,
+      "rsi": 44.75735443392387,
+      "volume_ratio": 0.0885284139100933
+    },
+    "market_data": {
+      "funding_rate": 0,
+      "oi_change_24h": 0,
+      "spread_pct": 0
+    },
+    "correlation": {
+      "correlation": 0.505,
+      "should_block": false
+    },
+    "volume_profile": {
+      "poc": 67.56400000000002,
+      "value_area_high": 71.62800000000001,
+      "value_area_low": 62.99200000000001
+    }
+  }
+}

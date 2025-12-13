@@ -7,7 +7,6 @@ Technical Indicators Package
 
 from .ema import (
     calculate_ema,
-    analyze_triple_ema,
     analyze_ema200,  # ✅ НОВОЕ
     EMAAnalysis
 )
@@ -33,14 +32,13 @@ from .volume import (
 
 from .atr import (
     calculate_atr,
-    suggest_stop_loss,
     analyze_waves_atr,  # ✅ НОВОЕ
     WaveAnalysis
 )
 
 from .correlation import (
     calculate_correlation,
-    analyze_btc_correlation,
+    analyze_market_correlation,  # Универсальная функция для crypto/stocks
     detect_correlation_anomaly,
     get_comprehensive_correlation_analysis,
     BTCCorrelationAnalysis,
@@ -59,6 +57,26 @@ from .news_analysis import (
     analyze_news
 )
 
+# ✅ НОВОЕ: False Breakout Strategy
+from .consolidation_channel import (
+    find_consolidation_channel,
+    is_price_in_channel,
+    get_channel_distance_pct,
+    ConsolidationChannel
+)
+
+from .false_breakout import (
+    detect_false_breakout,
+    FalseBreakoutSignal
+)
+
+from .candle_patterns import (
+    detect_buyout_bar,
+    detect_sellout_bar,
+    BuyoutBar,
+    SelloutBar
+)
+
 # ✅ НОВОЕ: Support/Resistance Levels
 from .support_resistance import (
     find_support_resistance_levels,
@@ -70,7 +88,6 @@ from .support_resistance import (
 __all__ = [
     # EMA
     'calculate_ema',
-    'analyze_triple_ema',
     'analyze_ema200',  # ✅ НОВОЕ
     'EMAAnalysis',
 
@@ -92,13 +109,12 @@ __all__ = [
 
     # ATR
     'calculate_atr',
-    'suggest_stop_loss',
     'analyze_waves_atr',  # ✅ НОВОЕ
     'WaveAnalysis',
 
     # Correlation
     'calculate_correlation',
-    'analyze_btc_correlation',
+    'analyze_market_correlation',  # Универсальная для crypto/stocks
     'detect_correlation_anomaly',
     'get_comprehensive_correlation_analysis',
     'BTCCorrelationAnalysis',
@@ -118,4 +134,16 @@ __all__ = [
     
     # ✅ НОВОЕ: News Analysis
     'analyze_news',
+    
+    # ✅ НОВОЕ: False Breakout Strategy
+    'find_consolidation_channel',
+    'is_price_in_channel',
+    'get_channel_distance_pct',
+    'ConsolidationChannel',
+    'detect_false_breakout',
+    'FalseBreakoutSignal',
+    'detect_buyout_bar',
+    'detect_sellout_bar',
+    'BuyoutBar',
+    'SelloutBar',
 ]

@@ -48,35 +48,38 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
         logger.warning("Stage 3: No pairs provided")
         return [], []
 
-    logger.info(
-        f"Stage 3 (ENHANCED): Analyzing {len(selected_pairs)} pairs "
-        f"with MAXIMUM historical data (provider: {config.STAGE3_PROVIDER})"
-    )
+    from utils.asset_detector import AssetTypeDetector
+    from data_providers import fetch_moex_index_candles
+    
+    grouped = AssetTypeDetector.group_by_type(selected_pairs)
+    logger.info(f"Stage 3: Analyzing {len(selected_pairs)} pairs ({len(grouped['stock'])} stocks, {len(grouped['crypto'])} crypto)")
+    
+    # Определяем типы активов для загрузки соответствующих индексов
+    asset_types = AssetTypeDetector.detect_batch(selected_pairs)
+    has_stocks = any(at == 'stock' for at in asset_types.values())
+    has_crypto = any(at == 'crypto' for at in asset_types.values())
+    
+    # Загружаем индексы рынка (BTC для crypto, MOEX для stocks)
+    market_data_result = await _load_market_index_candles(has_crypto, has_stocks, context="Stage 3")
+    if not market_data_result['success']:
+        if not has_stocks and not has_crypto:
+            return [], []
+        # Продолжаем с доступными данными
+    
+    btc_candles_1h_raw = market_data_result.get('btc_1h_raw')
+    btc_candles_4h_raw = market_data_result.get('btc_4h_raw')
+    btc_candles_1h = market_data_result.get('btc_1h')
+    btc_candles_4h = market_data_result.get('btc_4h')
+    moex_candles_1h_raw = market_data_result.get('moex_1h_raw')
+    moex_candles_4h_raw = market_data_result.get('moex_4h_raw')
+    moex_candles_1h = market_data_result.get('moex_1h')
+    moex_candles_4h = market_data_result.get('moex_4h')
 
-    # Загрузка BTC свечей
-    logger.debug("Stage 3: Loading BTC candles with extended history")
-    btc_candles_1h_raw = await fetch_candles('BTCUSDT', config.TIMEFRAME_SHORT, 200)
-    btc_candles_4h_raw = await fetch_candles('BTCUSDT', config.TIMEFRAME_LONG, 200)
-
-    if not btc_candles_1h_raw or not btc_candles_4h_raw:
-        logger.error("Stage 3: Failed to load BTC candles (critical)")
-        return [], []
-
-    btc_candles_1h = normalize_candles(btc_candles_1h_raw, symbol='BTCUSDT', interval=config.TIMEFRAME_SHORT)
-    btc_candles_4h = normalize_candles(btc_candles_4h_raw, symbol='BTCUSDT', interval=config.TIMEFRAME_LONG)
-
-    if not btc_candles_1h or not btc_candles_4h:
-        logger.error("Stage 3: BTC candles normalization failed")
-        return [], []
-
-    # ✅ НОВОЕ: Загружаем новости BTC один раз для всех пар
-    # BTC новости важны для анализа корреляции
-    logger.info("Stage 3: Loading BTC news (will be used for correlation analysis)")
-    btc_news_data = await _analyze_news_for_symbol('BTCUSDT')
-    if btc_news_data.get('news_found'):
-        logger.info(f"Stage 3: BTC news loaded ({len(btc_news_data.get('news_summary', ''))} chars)")
-    else:
-        logger.info("Stage 3: No BTC news found")
+    # Загружаем новости BTC один раз для всех криптопар
+    btc_news_data = {}
+    if has_crypto:
+        logger.debug("Stage 3: Loading BTC news for crypto correlation")
+        btc_news_data = await _analyze_news_for_symbol('BTCUSDT')
 
     approved_signals = []
     rejected_signals = []
@@ -85,7 +88,7 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
 
     for symbol in selected_pairs:
         try:
-            logger.info(f"Stage 3: Analyzing {symbol} with FULL HISTORY...")
+            logger.debug(f"Stage 3: Analyzing {symbol}...")
             candles_1h_raw, candles_4h_raw = await _load_candles_extended(symbol)
 
             if not candles_1h_raw or not candles_4h_raw:
@@ -135,10 +138,27 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
             market_data = await get_market_snapshot(symbol, session)
             market_data_history = await _get_market_data_history(symbol, session)
 
-            # BTC CORRELATION
-            correlation_data_full = await _analyze_correlation_with_history(
-                symbol, candles_1h, candles_4h, btc_candles_1h, btc_candles_4h
-            )
+            # MARKET CORRELATION (BTC для crypto, MOEX для stocks)
+            asset_type = asset_types.get(symbol, 'crypto')
+            if asset_type == 'stock' and moex_candles_1h and moex_candles_4h:
+                logger.debug(f"Stage 3: {symbol} - Calculating correlation with MOEX index")
+                correlation_data_full = await _analyze_correlation_with_history(
+                    symbol, candles_1h, candles_4h, moex_candles_1h, moex_candles_4h, asset_type='stock'
+                )
+                if correlation_data_full.get('current'):
+                    corr_analysis = correlation_data_full['current'].get('market_correlation')
+                    market_name = correlation_data_full['current'].get('market_name', 'MOEX')
+                    if corr_analysis:
+                        corr_value = corr_analysis.correlation
+                        logger.debug(f"Stage 3: {symbol} - {market_name} correlation: {corr_value:.3f}")
+            elif asset_type == 'crypto' and btc_candles_1h and btc_candles_4h:
+                logger.debug(f"Stage 3: {symbol} - Calculating correlation with BTC")
+                correlation_data_full = await _analyze_correlation_with_history(
+                    symbol, candles_1h, candles_4h, btc_candles_1h, btc_candles_4h, asset_type='crypto'
+                )
+            else:
+                logger.warning(f"Stage 3: {symbol} - Missing market candles for correlation ({asset_type})")
+                correlation_data_full = {'current': None, 'history': []}
 
             # VOLUME PROFILE
             vp_data_full = await _calculate_vp_with_history(candles_4h, current_price)
@@ -149,8 +169,7 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
             # ✅ НОВОЕ: Анализ новостей
             news_data = await _analyze_news_for_symbol(symbol)
 
-            # ✅ ВАЖНО: Для S/R уровней делаем ПРОСТУЮ проверку расстояния
-            # (не пересчитываем уровни заново)
+            # Простая проверка расстояния до S/R уровней
             sr_validation = await _validate_sr_distance_simple(candles_4h, current_price)
 
             # COMPREHENSIVE DATA
@@ -162,9 +181,9 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 'indicators_4h': indicators_4h,
                 'current_price': current_price,
 
-                # ✅ УПРОЩЁННЫЕ S/R данные (БЕЗ ПЕРЕСЧЁТА уровней)
+                # S/R данные (простая проверка расстояния)
                 'support_resistance_4h': sr_validation,
-                'sr_history': [],  # Пустая история, используем данные из Stage 1
+                'sr_history': [],  # История из Stage 1
 
                 'wave_analysis_4h': wave_data_full['current'],
                 'wave_history': wave_data_full['history'],
@@ -183,29 +202,22 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 'imb_history': smc_data_full['imb_history'],
                 'liquidity_sweep': smc_data_full['sweep_current'],
                 'sweep_history': smc_data_full['sweep_history'],
-                'btc_candles_1h': btc_candles_1h_raw[-100:],
-                'btc_candles_4h': btc_candles_4h_raw[-100:],
-                'btc_indicators': _calculate_ultra_full_indicators(btc_candles_4h, "BTC_4H"),
+                'btc_candles_1h': btc_candles_1h_raw[-100:] if btc_candles_1h_raw else [],
+                'btc_candles_4h': btc_candles_4h_raw[-100:] if btc_candles_4h_raw else [],
+                'btc_indicators': _calculate_ultra_full_indicators(btc_candles_4h, "BTC_4H") if btc_candles_4h else None,
+                'moex_candles_1h': moex_candles_1h_raw[-100:] if moex_candles_1h_raw else [],
+                'moex_candles_4h': moex_candles_4h_raw[-100:] if moex_candles_4h_raw else [],
+                'moex_indicators': _calculate_ultra_full_indicators(moex_candles_4h, "MOEX_4H") if moex_candles_4h else None,
                 
-                # ✅ НОВОЕ: Данные новостей
+                # Данные новостей
                 'news_data': news_data,
                 
-                # ✅ НОВОЕ: Новости BTC для анализа корреляции
-                # Важно: если корреляция высокая, новости BTC влияют на актив
-                'btc_news_data': btc_news_data
+                # Новости BTC для анализа корреляции (только для crypto)
+                'btc_news_data': btc_news_data if asset_type == 'crypto' else {},
+                'asset_type': asset_type
             }
 
-            logger.debug(
-                f"Stage 3: {symbol} - Comprehensive data assembled with FULL HISTORY: "
-                f"indicators={'✓' if indicators_1h and indicators_4h else '✗'}, "
-                f"sr={'✓' if sr_validation else '✗'}, "
-                f"waves={'✓' if wave_data_full else '✗'}, "
-                f"ema200={'✓' if ema200_data_full else '✗'}, "
-                f"market={'✓' if market_data else '✗'}, "
-                f"corr={'✓' if correlation_data_full else '✗'}, "
-                f"vp={'✓' if vp_data_full else '✗'}, "
-                f"smc={'✓' if smc_data_full else '✗'}"
-            )
+            logger.debug(f"Stage 3: {symbol} - Data prepared")
 
             # AI анализ
             analysis_result = await ai_router.analyze_pair_comprehensive(symbol, comprehensive_data)
@@ -225,7 +237,7 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                     comprehensive_data=comprehensive_data
                 )
                 approved_signals.append(trading_signal)
-                logger.info(f"Stage 3: ✓ APPROVED {symbol} {signal_type} (confidence: {confidence}%)")
+                logger.info(f"Stage 3: ✓ {symbol} {signal_type} (conf: {confidence}%)")
             else:
                 rejection_reason = analysis_result.get('rejection_reason', 'Low confidence or no signal')
                 rejected_signals.append({
@@ -233,7 +245,7 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                     'signal': 'NO_SIGNAL',
                     'rejection_reason': rejection_reason
                 })
-                logger.info(f"Stage 3: ✗ REJECTED {symbol} - {rejection_reason}")
+                logger.debug(f"Stage 3: ✗ {symbol} - {rejection_reason}")
         except Exception as e:
             logger.error(f"Stage 3: Error analyzing {symbol}: {e}", exc_info=False)
             rejected_signals.append({
@@ -242,17 +254,116 @@ async def run_stage3(selected_pairs: List[str]) -> tuple[List[TradingSignal], Li
                 'rejection_reason': f'Analysis error: {str(e)[:100]}'
             })
 
-    logger.info(f"Stage 3 complete: {len(approved_signals)} approved, {len(rejected_signals)} rejected")
+    logger.info(f"Stage 3: {len(approved_signals)} approved, {len(rejected_signals)} rejected")
     return approved_signals, rejected_signals
 
 # ============================================================================
-# HELPER: ПРОСТАЯ ПРОВЕРКА S/R РАССТОЯНИЯ (БЕЗ ПЕРЕСЧЁТА УРОВНЕЙ)
+# HELPER: ЗАГРУЗКА ИНДЕКСОВ РЫНКА (BTC/MOEX)
+# ============================================================================
+
+async def _load_market_index_candles(
+    has_crypto: bool,
+    has_stocks: bool,
+    context: str = "Analysis"
+) -> Dict:
+    """
+    Универсальная функция для загрузки индексов рынка (BTC для crypto, MOEX для stocks)
+    
+    Args:
+        has_crypto: Нужно ли загружать BTC
+        has_stocks: Нужно ли загружать MOEX
+        context: Контекст для логирования
+    
+    Returns:
+        Dict с загруженными свечами и статусом
+    """
+    from data_providers import fetch_candles, normalize_candles, fetch_moex_index_candles
+    from config import config
+    
+    result = {
+        'success': True,
+        'btc_1h_raw': None,
+        'btc_4h_raw': None,
+        'btc_1h': None,
+        'btc_4h': None,
+        'moex_1h_raw': None,
+        'moex_4h_raw': None,
+        'moex_1h': None,
+        'moex_4h': None
+    }
+    
+    # Загрузка BTC свечей для криптовалют
+    if has_crypto:
+        logger.debug(f"{context}: Loading BTC candles for correlation")
+        try:
+            btc_1h_raw = await fetch_candles('BTCUSDT', config.TIMEFRAME_SHORT, 200)
+            btc_4h_raw = await fetch_candles('BTCUSDT', config.TIMEFRAME_LONG, 200)
+
+            if not btc_1h_raw or not btc_4h_raw:
+                logger.error(f"{context}: Failed to load BTC candles")
+                if not has_stocks:
+                    result['success'] = False
+                return result
+
+            btc_1h = normalize_candles(btc_1h_raw, symbol='BTCUSDT', interval=config.TIMEFRAME_SHORT)
+            btc_4h = normalize_candles(btc_4h_raw, symbol='BTCUSDT', interval=config.TIMEFRAME_LONG)
+
+            if not btc_1h or not btc_4h:
+                logger.error(f"{context}: BTC candles normalization failed")
+                if not has_stocks:
+                    result['success'] = False
+                return result
+
+            result['btc_1h_raw'] = btc_1h_raw
+            result['btc_4h_raw'] = btc_4h_raw
+            result['btc_1h'] = btc_1h
+            result['btc_4h'] = btc_4h
+        except Exception as e:
+            logger.error(f"{context}: Error loading BTC candles: {e}")
+            if not has_stocks:
+                result['success'] = False
+
+    # Загрузка MOEX свечей для акций
+    if has_stocks:
+        logger.debug(f"{context}: Loading MOEX candles for correlation")
+        try:
+            moex_1h_raw = await fetch_moex_index_candles(config.TIMEFRAME_SHORT, 200)
+            moex_4h_raw = await fetch_moex_index_candles(config.TIMEFRAME_LONG, 200)
+
+            if not moex_1h_raw or not moex_4h_raw:
+                logger.error(f"{context}: Failed to load MOEX candles")
+                if not has_crypto:
+                    result['success'] = False
+                return result
+
+            moex_1h = normalize_candles(moex_1h_raw, symbol='MOEX', interval=config.TIMEFRAME_SHORT)
+            moex_4h = normalize_candles(moex_4h_raw, symbol='MOEX', interval=config.TIMEFRAME_LONG)
+
+            if not moex_1h or not moex_4h:
+                logger.error(f"{context}: MOEX candles normalization failed")
+                if not has_crypto:
+                    result['success'] = False
+                return result
+
+            result['moex_1h_raw'] = moex_1h_raw
+            result['moex_4h_raw'] = moex_4h_raw
+            result['moex_1h'] = moex_1h
+            result['moex_4h'] = moex_4h
+        except Exception as e:
+            logger.error(f"{context}: Error loading MOEX candles: {e}")
+            if not has_crypto:
+                result['success'] = False
+    
+    return result
+
+# ============================================================================
+# HELPER: ПРОСТАЯ ПРОВЕРКА S/R РАССТОЯНИЯ
 # ============================================================================
 
 async def _validate_sr_distance_simple(candles, current_price) -> Dict:
     """
-    ✅ НОВОЕ: Упрощённая проверка близости к уровням
-    НЕ пересчитываем уровни заново, просто проверяем локальные max/min
+    Упрощённая проверка близости к уровням
+    Проверяет локальные max/min без пересчёта уровней
     """
     from config import config
     
@@ -291,7 +402,7 @@ async def _validate_sr_distance_simple(candles, current_price) -> Dict:
         }
 
 # ============================================================================
-# НОВОСТНОЙ АНАЛИЗ
+# NEWS ANALYSIS
 # ============================================================================
 
 async def _analyze_news_for_symbol(symbol: str) -> Dict:
@@ -305,19 +416,9 @@ async def _analyze_news_for_symbol(symbol: str) -> Dict:
         Dict с данными новостей
     """
     try:
-        logger.info(f"Stage 3: Starting news analysis for {symbol}")
+        logger.debug(f"Stage 3: Analyzing news for {symbol}")
         from indicators.news_analysis import analyze_news
         news_data = await analyze_news(symbol)
-        
-        if news_data.get('news_found'):
-            logger.info(
-                f"Stage 3: News analysis complete for {symbol}: "
-                f"found={news_data.get('news_found')}, "
-                f"entities={len(news_data.get('related_entities', []))}, "
-                f"summary_length={len(news_data.get('news_summary', ''))}"
-            )
-        else:
-            logger.info(f"Stage 3: No news found for {symbol}")
         
         return news_data
     except Exception as e:
@@ -330,11 +431,11 @@ async def _analyze_news_for_symbol(symbol: str) -> Dict:
         }
 
 # ============================================================================
-# ОСТАЛЬНЫЕ ФУНКЦИИ (БЕЗ ИЗМЕНЕНИЙ)
+# HELPER FUNCTIONS
 # ============================================================================
 
 async def _load_candles_extended(symbol: str) -> tuple:
-    """Загрузка свечей с УВЕЛИЧЕННОЙ историей"""
+    """Загрузка свечей с расширенной историей"""
     from data_providers import fetch_candles
     from config import config
     import asyncio
@@ -346,7 +447,7 @@ async def _load_candles_extended(symbol: str) -> tuple:
     return candles_1h, candles_4h
 
 def _calculate_ultra_full_indicators(candles, tf: str = "UNKNOWN") -> Dict:
-    """Рассчитать индикаторы с МАКСИМАЛЬНОЙ историей (100+ баров)"""
+    """Рассчитать индикаторы с полной историей (100+ баров)"""
     from indicators.ema import calculate_ema
     from indicators.rsi import calculate_rsi
     from indicators.macd import calculate_macd
@@ -446,17 +547,17 @@ async def _get_market_data_history(symbol: str, session) -> List[Dict]:
     """История market data (последние значения)"""
     return []
 
-async def _analyze_correlation_with_history(symbol, candles_1h, candles_4h, btc_1h, btc_4h) -> Dict:
-    """Корреляция с историей"""
+async def _analyze_correlation_with_history(symbol, candles_1h, candles_4h, market_1h, market_4h, asset_type='crypto') -> Dict:
+    """Корреляция с историей (BTC для crypto, MOEX для stocks)"""
     from indicators import get_comprehensive_correlation_analysis, calculate_correlation
 
     try:
-        corr_current = get_comprehensive_correlation_analysis(symbol, candles_1h, btc_1h, 'UNKNOWN')
+        corr_current = get_comprehensive_correlation_analysis(symbol, candles_1h, market_1h, 'UNKNOWN', asset_type=asset_type)
         history = []
 
         for window in [12, 24, 48]:
-            if len(candles_1h.closes) >= window and len(btc_1h.closes) >= window:
-                corr = calculate_correlation(candles_1h.closes, btc_1h.closes, window=window)
+            if len(candles_1h.closes) >= window and len(market_1h.closes) >= window:
+                corr = calculate_correlation(candles_1h.closes, market_1h.closes, window=window)
                 history.append({'window': window, 'correlation': corr})
         return {'current': corr_current, 'history': history}
     except Exception as e:
@@ -588,7 +689,7 @@ def _calculate_rr_ratio(analysis_result: Dict) -> float:
         return round(reward / risk, 2)
     return 0.0
 
-async def analyze_single_pair(symbol: str, direction: str) -> Optional[TradingSignal]:
+async def analyze_single_pair(symbol: str, direction: str, asset_type: str = None) -> Optional[TradingSignal]:
     """Анализ ОДНОЙ конкретной пары"""
     from data_providers import fetch_candles, normalize_candles, get_market_snapshot
     from data_providers.bybit_client import get_session
@@ -596,28 +697,39 @@ async def analyze_single_pair(symbol: str, direction: str) -> Optional[TradingSi
     from config import config
 
     logger.info(f"Manual analysis: {symbol} {direction}")
+    
+    from utils.asset_detector import AssetTypeDetector
+    from data_providers import fetch_moex_index_candles
+    
+    # Определяем тип актива если не передан
+    if asset_type is None:
+        asset_type = AssetTypeDetector.detect(symbol)
 
     try:
-        logger.debug(f"Loading BTC candles with extended history")
-        btc_candles_1h_raw = await fetch_candles('BTCUSDT', config.TIMEFRAME_SHORT, 200)
-        btc_candles_4h_raw = await fetch_candles('BTCUSDT', config.TIMEFRAME_LONG, 200)
+        # Загружаем соответствующие индексы рынка (универсальная функция)
+        has_crypto = (asset_type == 'crypto')
+        has_stocks = (asset_type == 'stock')
+        market_data_result = await _load_market_index_candles(has_crypto, has_stocks, context="Manual analysis")
         
-        # ✅ НОВОЕ: Загружаем новости BTC для анализа корреляции
-        logger.info("Manual analysis: Loading BTC news for correlation analysis")
-        btc_news_data = await _analyze_news_for_symbol('BTCUSDT')
+        if not market_data_result['success']:
+            return _create_no_signal(symbol, 'Failed to load market index candles')
+        
+        btc_candles_1h_raw = market_data_result.get('btc_1h_raw')
+        btc_candles_4h_raw = market_data_result.get('btc_4h_raw')
+        btc_candles_1h = market_data_result.get('btc_1h')
+        btc_candles_4h = market_data_result.get('btc_4h')
+        moex_candles_1h_raw = market_data_result.get('moex_1h_raw')
+        moex_candles_4h_raw = market_data_result.get('moex_4h_raw')
+        moex_candles_1h = market_data_result.get('moex_1h')
+        moex_candles_4h = market_data_result.get('moex_4h')
+        
+        # Загружаем новости BTC для анализа корреляции (только для crypto)
+        btc_news_data = {}
+        if asset_type == 'crypto':
+            logger.debug("Manual analysis: Loading BTC news")
+            btc_news_data = await _analyze_news_for_symbol('BTCUSDT')
 
-        if not btc_candles_1h_raw or not btc_candles_4h_raw:
-            logger.error(f"Failed to load BTC candles")
-            return _create_no_signal(symbol, 'Failed to load BTC candles')
-
-        btc_candles_1h = normalize_candles(btc_candles_1h_raw, 'BTCUSDT', config.TIMEFRAME_SHORT)
-        btc_candles_4h = normalize_candles(btc_candles_4h_raw, 'BTCUSDT', config.TIMEFRAME_LONG)
-
-        if not btc_candles_1h or not btc_candles_4h:
-            logger.error(f"BTC candles normalization failed")
-            return _create_no_signal(symbol, 'BTC candles normalization failed')
-
-        logger.info(f"Loading extended candles for {symbol}")
+        logger.debug(f"Loading candles for {symbol}")
         candles_1h_raw, candles_4h_raw = await _load_candles_extended(symbol)
 
         if not candles_1h_raw or not candles_4h_raw:
@@ -643,16 +755,28 @@ async def analyze_single_pair(symbol: str, direction: str) -> Optional[TradingSi
         session = await get_session()
         market_data = await get_market_snapshot(symbol, session)
         market_data_history = await _get_market_data_history(symbol, session)
-        correlation_data_full = await _analyze_correlation_with_history(
-            symbol, candles_1h, candles_4h, btc_candles_1h, btc_candles_4h
-        )
+        
+        # Корреляция с соответствующим индексом рынка
+        if asset_type == 'stock' and moex_candles_1h and moex_candles_4h:
+            logger.debug(f"Manual analysis: {symbol} - Calculating correlation with MOEX")
+            correlation_data_full = await _analyze_correlation_with_history(
+                symbol, candles_1h, candles_4h, moex_candles_1h, moex_candles_4h, asset_type='stock'
+            )
+        elif asset_type == 'crypto' and btc_candles_1h and btc_candles_4h:
+            logger.debug(f"Manual analysis: {symbol} - Calculating correlation with BTC")
+            correlation_data_full = await _analyze_correlation_with_history(
+                symbol, candles_1h, candles_4h, btc_candles_1h, btc_candles_4h, asset_type='crypto'
+            )
+        else:
+            logger.warning(f"Manual analysis: {symbol} - Missing market candles for correlation ({asset_type})")
+            correlation_data_full = {'current': None, 'history': []}
         vp_data_full = await _calculate_vp_with_history(candles_4h, current_price)
         smc_data_full = await _analyze_smc_with_history(candles_1h, candles_4h, current_price)
 
-        # ✅ Упрощённая проверка S/R
+        # Упрощённая проверка S/R
         sr_validation = await _validate_sr_distance_simple(candles_4h, current_price)
 
-        # ✅ НОВОЕ: Анализ новостей для ручного анализа
+        # Анализ новостей
         news_data = await _analyze_news_for_symbol(symbol)
 
         comprehensive_data = {
@@ -681,16 +805,20 @@ async def analyze_single_pair(symbol: str, direction: str) -> Optional[TradingSi
             'imb_history': smc_data_full['imb_history'],
             'liquidity_sweep': smc_data_full['sweep_current'],
             'sweep_history': smc_data_full['sweep_history'],
-            'btc_candles_1h': btc_candles_1h_raw[-100:],
-            'btc_candles_4h': btc_candles_4h_raw[-100:],
-            'btc_indicators': _calculate_ultra_full_indicators(btc_candles_4h, "BTC_4H"),
+            'btc_candles_1h': btc_candles_1h_raw[-100:] if btc_candles_1h_raw else [],
+            'btc_candles_4h': btc_candles_4h_raw[-100:] if btc_candles_4h_raw else [],
+            'btc_indicators': _calculate_ultra_full_indicators(btc_candles_4h, "BTC_4H") if btc_candles_4h else None,
+            'moex_candles_1h': moex_candles_1h_raw[-100:] if moex_candles_1h_raw else [],
+            'moex_candles_4h': moex_candles_4h_raw[-100:] if moex_candles_4h_raw else [],
+            'moex_indicators': _calculate_ultra_full_indicators(moex_candles_4h, "MOEX_4H") if moex_candles_4h else None,
             'forced_direction': direction,
             
             # ✅ НОВОЕ: Данные новостей
             'news_data': news_data,
             
-            # ✅ НОВОЕ: Новости BTC для анализа корреляции
-            'btc_news_data': btc_news_data
+            # ✅ НОВОЕ: Новости BTC для анализа корреляции (только для crypto)
+            'btc_news_data': btc_news_data if asset_type == 'crypto' else {},
+            'asset_type': asset_type
         }
 
         logger.info(f"{symbol} - Running AI analysis (forced: {direction})")
@@ -711,11 +839,11 @@ async def analyze_single_pair(symbol: str, direction: str) -> Optional[TradingSi
                 analysis=analysis_result.get('analysis', 'No analysis provided'),
                 comprehensive_data=comprehensive_data
             )
-            logger.info(f"{symbol} - ✅ APPROVED {signal_type} (confidence: {confidence}%)")
+            logger.info(f"{symbol} - ✅ {signal_type} (conf: {confidence}%)")
             return trading_signal
         else:
             rejection_reason = analysis_result.get('rejection_reason', f'{direction} signal not found')
-            logger.info(f"{symbol} - ❌ NO {direction} SIGNAL: {rejection_reason}")
+            logger.debug(f"{symbol} - ❌ NO {direction} SIGNAL: {rejection_reason}")
             return TradingSignal(
                 symbol=symbol,
                 signal='NO_SIGNAL',

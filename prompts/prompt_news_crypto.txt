@@ -1,0 +1,170 @@
+═══════════════════════════════════════════════════════════════════
+CRYPTOCURRENCY NEWS SEARCH — ANALYSIS FOR LAST 72 HOURS (3 DAYS)
+═══════════════════════════════════════════════════════════════════
+
+TASK: Find all recent cryptocurrency news from the last 72 hours (3 days) regarding crypto asset {symbol} ({full_symbol}) on the internet.
+
+CRITICAL: Real money. Swing trading on 1H/4H timeframes. News should affect medium-term price movements in cryptocurrency markets.
+
+═══════════════════════════════════════════════════════════════════
+CRYPTO ASSET FOR ANALYSIS
+═══════════════════════════════════════════════════════════════════
+
+Symbol: {symbol}
+Full symbol: {full_symbol}
+Period: Last {hours_period} hours (3 days)
+  • From: {date_start}
+  • To: {current_time_utc}
+  
+⚠️ IMPORTANT: Use web search to find current cryptocurrency news on the internet!
+💡 For swing trading on 1H/4H, a broader context is needed - search for news from the last 3 days.
+
+═══════════════════════════════════════════════════════════════════
+SEARCH REQUIREMENTS
+═══════════════════════════════════════════════════════════════════
+
+1. DIRECT CRYPTO NEWS:
+   - News directly related to the cryptocurrency asset
+   - Protocol updates, forks, hard forks, network upgrades
+   - Listings/delistings on major exchanges (Binance, Coinbase, Kraken, etc.)
+   - Regulatory news (SEC, CFTC, bans, approvals, legal status)
+   - Large transactions, whale movements, transfers between wallets
+   - Token burns, supply changes, staking updates
+   - Updates from development teams, core developers
+   - Partnerships, integrations, payment adoption, merchant acceptance
+   - Exchange hacks, security incidents, smart contract vulnerabilities
+   - Mainnet launches, testnet updates, bridge developments
+
+2. INDIRECT CONNECTIONS (CRITICAL TO CONSIDER):
+   
+   For specific cryptocurrencies:
+   - DOGE, DOGEUSDT → Elon Musk, Twitter/X, SpaceX, Tesla (DOGE payments)
+   - BTC, BTCUSDT → Tesla, MicroStrategy, Michael Saylor, Grayscale, BlackRock, Bitcoin ETF, institutional adoption
+   - ETH, ETHUSDT → Ethereum ETF, Vitalik Buterin, network upgrades (EIPs), DeFi ecosystem, Layer 2 solutions
+   - SHIB, SHIBUSDT → Shiba Inu ecosystem, Shibarium, related projects
+   - SOL, SOLUSDT → Solana Foundation, FTX connections, network performance, validator news
+   - BNB, BNBUSDT → Binance, CZ, exchange operations, BSC ecosystem
+   - ADA, ADAUSDT → Cardano Foundation, Charles Hoskinson, development updates
+   - XRP, XRPUSDT → Ripple, SEC lawsuit, banking partnerships
+   - MATIC/POL, MATICUSDT → Polygon, Ethereum scaling, partnerships
+   - AVAX, AVAXUSDT → Avalanche Foundation, subnet launches, partnerships
+   
+   Key crypto personalities and entities:
+   - Elon Musk (DOGE, BTC influence)
+   - Michael Saylor, MicroStrategy (BTC)
+   - Vitalik Buterin (ETH)
+   - Changpeng Zhao (CZ), Binance (BNB, exchange tokens)
+   - Charles Hoskinson (ADA)
+   - Sam Bankman-Fried, FTX (historical impact, SOL connections)
+   
+   Regulatory and institutional:
+   - SEC (Bitcoin ETF, Ethereum ETF, regulatory actions)
+   - CFTC (derivatives regulation)
+   - FED, Federal Reserve (monetary policy affecting crypto)
+   - Central banks (CBDC developments, crypto bans/approvals)
+   - BlackRock, Grayscale, Fidelity (institutional crypto products)
+   - Major exchanges (Binance, Coinbase, Kraken regulatory issues)
+
+3. CORRELATED CRYPTO ASSETS AND MARKETS (CRITICAL - DEEP ANALYSIS):
+   
+   ⚠️ IMPORTANT: Search for news about CORRELATED and INVERSE-CORRELATED crypto assets!
+   
+   Direct Correlations (move together):
+   - For BTC: Search news about ETH, major altcoins (SOL, BNB, ADA, XRP), crypto market sentiment, Bitcoin dominance
+   - For ETH: Search news about BTC, DeFi tokens (UNI, AAVE, MKR), Layer 2 solutions (ARB, OP, MATIC), Ethereum ecosystem
+   - For altcoins: Search news about BTC (BTC dominance affects all alts - when BTC rises, alts often follow; when BTC falls, alts often fall harder)
+   - For exchange tokens (BNB, FTT, CRO): Search news about exchange operations, trading volumes, regulatory issues
+   - For DeFi tokens: Search news about Ethereum network, gas fees, DeFi protocols, yield farming trends
+   - For Layer 2 tokens: Search news about Ethereum scaling, adoption, bridge security
+   - For meme coins (DOGE, SHIB): Search news about social media trends, influencer mentions, community activity
+   
+   Inverse Correlations (move opposite):
+   - For BTC/crypto: Search news about traditional markets (DXY - dollar index, gold, bonds) - inverse correlation
+   - For crypto: Search news about USD strength, Fed policy, risk-off sentiment, stock market crashes
+   - For stablecoins: Search news about depegging events, regulatory scrutiny, issuer stability
+   - For crypto vs traditional assets: Search news about institutional rotation, macro sentiment shifts
+   
+   Market-Wide Crypto Connections:
+   - For any crypto: Search news about macro markets (S&P 500, NASDAQ, DXY, gold) - crypto often correlates with risk assets
+   - For any crypto: Search news about crypto market cap, total market sentiment, fear & greed index
+   - For any crypto: Search news about major exchange issues (Binance, Coinbase regulatory problems affect entire market)
+   - For any crypto: Search news about stablecoin market (USDT, USDC issues can affect all crypto)
+   - For any crypto: Search news about mining/hashing (BTC mining difficulty, ETH staking, affects supply dynamics)
+   
+   ⚠️ CRITICAL: If {symbol} moves up, search for news that might cause correlated crypto assets to:
+   - Move up together (positive correlation - e.g., BTC pump often lifts alts)
+   - Move down (inverse correlation - e.g., DXY strength often hurts crypto)
+   - This helps understand if the move is isolated to {symbol} or part of broader crypto market trend
+
+4. PRICE IMPACT AND MARKET CONTEXT:
+   - Priority: news with high potential to affect cryptocurrency price
+   - Ignore: minor updates, technical details without market significance
+   - Focus: macroeconomics, regulation, major events, institutional adoption, exchange listings
+   - ⚠️ DEEP ANALYSIS: Don't just find news - analyze HOW it affects the crypto asset:
+     * Is this news isolated to {symbol} or affects the whole crypto sector/market?
+     * Does this news create positive or negative sentiment for correlated crypto assets?
+     * What is the broader crypto market context? (bullish/bearish/neutral, BTC dominance trends)
+     * Are there conflicting signals from related markets? (e.g., BTC strength but DXY also rising)
+     * How does this affect crypto market structure? (institutional vs retail, exchange flows)
+
+═══════════════════════════════════════════════════════════════════
+RESPONSE FORMAT
+═══════════════════════════════════════════════════════════════════
+
+Provide a COMPREHENSIVE SUMMARY (3-6 sentences):
+- Include direct news about {symbol}
+- Include news about correlated/inverse-correlated crypto assets that might affect {symbol}
+- Mention crypto market-wide context and sentiment (BTC dominance, overall market trend)
+- Analyze how news might impact cryptocurrency price (not just list events)
+- Consider crypto-specific factors (exchange listings, regulatory clarity, institutional adoption)
+- Concise, but comprehensive - don't miss important connections
+- If no news found, write: "No cryptocurrency news found in the last 72 hours"
+
+EXAMPLES:
+
+✅ GOOD RESPONSES (comprehensive, with crypto correlations):
+
+"Elon Musk posted a tweet supporting DOGE. Tesla announced DOGE acceptance for merchandise purchases. SpaceX launched a satellite with DOGE logo. Meanwhile, BTC showed strength above $70k, which typically supports altcoin sentiment. However, DXY (dollar index) rose, creating headwinds for crypto markets. Crypto fear & greed index remained in extreme greed territory."
+
+"SEC approved BlackRock's Bitcoin ETF application. MicroStrategy purchased additional 1000 BTC. Michael Saylor announced long-term accumulation strategy. Institutional inflows into BTC ETFs reached record highs. ETH also gained on BTC strength, with Ethereum ETF approval rumors circulating. Overall crypto market cap increased 5% as institutional adoption narrative strengthened."
+
+"Binance announced listing of new altcoin {symbol} on major trading pairs. Exchange volume surged 200% in 24 hours. However, BTC dominance rose to 52%, typically negative for altcoins. Meanwhile, SEC issued warning about unregistered securities, creating regulatory uncertainty. Altcoin market showed mixed signals - some coins gained while others declined, suggesting selective rather than broad-based rally."
+
+❌ BAD RESPONSES:
+
+"No news found." (too short, didn't search)
+
+"Elon Musk said something about crypto." (no details, not specific)
+
+"Price rose 5%." (this is not news, this is a result)
+
+"{symbol} is a good investment." (opinion, not news)
+
+═══════════════════════════════════════════════════════════════════
+IMPORTANT
+═══════════════════════════════════════════════════════════════════
+
+- Use ONLY ENGLISH LANGUAGE for the response
+- Search the internet for real cryptocurrency news (use web search)
+- Focus ONLY on cryptocurrency markets - ignore stocks, commodities, forex (unless directly affecting crypto)
+- If no news is found, honestly state this
+- Consider timezone: search for news from the last 72 hours from the current moment
+- Priority: news with high potential to affect medium-term cryptocurrency price movements (swing trading)
+- Remember: This is for CRYPTOCURRENCY trading only - all news should be crypto-related
+
+═══════════════════════════════════════════════════════════════════
+FINAL REMINDER
+═══════════════════════════════════════════════════════════════════
+
+1. Search the internet for real cryptocurrency news from the last 72 hours - DEEP SEARCH, not superficial
+2. Consider indirect connections (Elon Musk for DOGE, Tesla/MicroStrategy for BTC, Vitalik for ETH, etc.)
+3. ⚠️ CRITICAL: Search for news about CORRELATED and INVERSE-CORRELATED crypto assets
+4. Analyze crypto market-wide context - is the move isolated or part of broader crypto trend?
+5. Focus on news affecting medium-term cryptocurrency price movements
+6. Comprehensive summary: 3-6 sentences, include crypto correlations and market context
+7. Don't just list events - analyze HOW they might affect cryptocurrency price
+8. If no news found, honestly state this
+9. REMEMBER: This prompt is ONLY for CRYPTOCURRENCY markets - ignore stocks, forex, commodities
+
+Goal: Provide the crypto trader with current information about factors affecting the cryptocurrency asset's price.
+

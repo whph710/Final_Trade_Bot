@@ -1,0 +1,55 @@
+{
+  "symbol": "GMXUSDT",
+  "signal": "LONG",
+  "confidence": 73,
+  "entry_price": 8.484,
+  "stop_loss": 8.425,
+  "take_profit_levels": [
+    8.644,
+    8.804,
+    8.964
+  ],
+  "risk_reward_ratio": 5.42,
+  "analysis": "LONG: Канал консолидации 21 день (STRONG), 4 касания верхней и 5 касаний нижней границ (STRONG), ширина 11.7% (умеренный канал). Ложный пробой вниз на 1.8% с возвратом за 2 бара (идеально). Выкупной бар силой 85 (очень сильный). Инструмент показал относительную силу, не падая при падении BTC. Объём на возврате 1.95x (сильный). Оценка: 86/125.",
+  "timestamp": "2025-12-12T00:22:34.397732",
+  "backtest_status": "CHECKED",
+  "backtest_result": {
+    "outcome": "TP2_HIT",
+    "exit_price": 8.804,
+    "pnl_pct": 3.77,
+    "checked_at": "2025-12-13T11:48:51.738377"
+  },
+  "comprehensive_data": {
+    "current_price": 8.484,
+    "indicators_1h": {
+      "price": 8.484,
+      "ema9": 8.497888265464656,
+      "ema21": 8.5935185406124,
+      "ema50": 8.722226630184151,
+      "rsi": 36.42478260664027,
+      "volume_ratio": 1.9540794435787998
+    },
+    "indicators_4h": {
+      "price": 8.456,
+      "ema9": 8.688194437668843,
+      "ema21": 8.767371470745601,
+      "ema50": 8.761673339710272,
+      "rsi": 38.83497890302994,
+      "volume_ratio": 1.800884784206066
+    },
+    "market_data": {
+      "funding_rate": 0.0001,
+      "oi_change_24h": -13.8,
+      "spread_pct": 0.0118
+    },
+    "correlation": {
+      "correlation": 0.948,
+      "should_block": false
+    },
+    "volume_profile": {
+      "poc": 8.734000000000002,
+      "value_area_high": 10.480800000000002,
+      "value_area_low": 8.20996
+    }
+  }
+}

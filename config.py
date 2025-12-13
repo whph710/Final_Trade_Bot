@@ -19,14 +19,41 @@ def load_env():
     if not env_path.exists():
         raise FileNotFoundError(f".env file not found at {env_path}")
 
-    with open(env_path, 'r', encoding='utf-8') as f:
-        for line in f:
+    with open(env_path, 'r', encoding='utf-8', errors='ignore') as f:
+        for line_num, line in enumerate(f, 1):
             line = line.strip()
-            if line and not line.startswith('#') and '=' in line:
-                key, value = line.split('=', 1)
-                if '#' in value:
-                    value = value.split('#')[0]
-                os.environ[key.strip()] = value.strip()
+            # Пропускаем пустые строки и комментарии
+            if not line or line.startswith('#'):
+                continue
+            
+            # Пропускаем строки с пробелами между символами (поврежденные)
+            if ' ' in line and '=' in line:
+                # Проверяем, не является ли это поврежденной строкой
+                parts = line.split('=', 1)
+                if len(parts) == 2:
+                    key, value = parts
+                    # Если в ключе или значении много пробелов подряд, пропускаем
+                    if key.count(' ') > 2 or value.count(' ') > 10:
+                        continue
+            
+            if '=' in line:
+                try:
+                    key, value = line.split('=', 1)
+                    if '#' in value:
+                        value = value.split('#')[0]
+                    # Удаляем null символы и другие недопустимые символы
+                    key = key.strip().replace('\x00', '').replace('\r', '').replace('\n', '')
+                    value = value.strip().replace('\x00', '').replace('\r', '').replace('\n', '')
+                    # Удаляем лишние пробелы (но не все, так как значение может содержать пробелы)
+                    key = ' '.join(key.split())  # Нормализуем пробелы в ключе
+                    
+                    if key and value:  # Проверяем что ключ и значение не пустые
+                        os.environ[key] = value
+                except Exception as e:
+                    # Логируем ошибку, но продолжаем обработку
+                    import logging
+                    logging.warning(f"Error parsing .env line {line_num}: {e}")
+                    continue
 
 
 def safe_int(value: str, default: int) -> int:
@@ -95,6 +122,9 @@ ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
 
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 
+# Tinkoff Investments API
+TINKOFF_INVEST_TOKEN = os.getenv('TINKOFF_INVEST_TOKEN')
+
 # ✅ НОВОЕ: Поддержка нескольких пользователей
 TELEGRAM_USER_IDS_STR = os.getenv('TELEGRAM_USER_IDS', os.getenv('TELEGRAM_USER_ID', '0'))
 
@@ -158,7 +188,7 @@ ATR_PERIOD = 14
 # ============================================================================
 # SCANNING
 # ============================================================================
-QUICK_SCAN_CANDLES = 100
+QUICK_SCAN_CANDLES = 400  # Увеличено для поиска каналов консолидации >30 дней
 
 # ============================================================================
 # STAGE 2: AI PAIR SELECTION
@@ -237,8 +267,8 @@ ANTHROPIC_THINKING = safe_bool(os.getenv('ANTHROPIC_THINKING', 'false'))
 # ============================================================================
 # PROMPTS PATHS
 # ============================================================================
-SELECTION_PROMPT = 'ai/prompts/prompt_select.txt'
-ANALYSIS_PROMPT = 'ai/prompts/prompt_analyze.txt'
+SELECTION_PROMPT = 'prompts/prompt_select.txt'
+ANALYSIS_PROMPT = 'prompts/prompt_analyze.txt'
 
 # ============================================================================
 # AI LEGACY
@@ -536,6 +566,52 @@ BACKTEST_QUALITY_OB_MAX_SCORE = safe_int(os.getenv('BACKTEST_QUALITY_OB_MAX_SCOR
 # Imbalance scoring (для quality fallback)
 BACKTEST_QUALITY_IMB_FILL_THRESHOLD = safe_int(os.getenv('BACKTEST_QUALITY_IMB_FILL_THRESHOLD', '50'), 50)
 
+# ============================================================================
+# FALSE BREAKOUT STRATEGY PARAMETERS
+# ============================================================================
+# Consolidation Channel
+CONSOLIDATION_MIN_DURATION_CANDLES = safe_int(os.getenv('CONSOLIDATION_MIN_DURATION_CANDLES', '30'), 30)
+CONSOLIDATION_MIN_DURATION_DAYS = safe_float(os.getenv('CONSOLIDATION_MIN_DURATION_DAYS', '14.0'), 14.0)
+CONSOLIDATION_LOOKBACK_CANDLES = safe_int(os.getenv('CONSOLIDATION_LOOKBACK_CANDLES', '350'), 350)
+CONSOLIDATION_TOLERANCE_PCT = safe_float(os.getenv('CONSOLIDATION_TOLERANCE_PCT', '1.0'), 1.0)
+CONSOLIDATION_MAX_WIDTH_PCT = safe_float(os.getenv('CONSOLIDATION_MAX_WIDTH_PCT', '20.0'), 20.0)
+CONSOLIDATION_MIN_INSIDE_RATIO = safe_float(os.getenv('CONSOLIDATION_MIN_INSIDE_RATIO', '0.7'), 0.7)
+CONSOLIDATION_MIN_TOUCHES = safe_int(os.getenv('CONSOLIDATION_MIN_TOUCHES', '2'), 2)
+CONSOLIDATION_MIN_BARS_AFTER = safe_int(os.getenv('CONSOLIDATION_MIN_BARS_AFTER', '10'), 10)
+CONSOLIDATION_SEARCH_STEP_START = safe_int(os.getenv('CONSOLIDATION_SEARCH_STEP_START', '3'), 3)  # Шаг для window_start
+CONSOLIDATION_SEARCH_STEP_SIZE = safe_int(os.getenv('CONSOLIDATION_SEARCH_STEP_SIZE', '5'), 5)  # Шаг для window_size
+
+# False Breakout (NEW - Level-based strategy)
+FALSE_BREAKOUT_MIN_DEPTH_PCT = safe_float(os.getenv('FALSE_BREAKOUT_MIN_DEPTH_PCT', '0.5'), 0.5)
+FALSE_BREAKOUT_MAX_RETURN_BARS = safe_int(os.getenv('FALSE_BREAKOUT_MAX_RETURN_BARS', '10'), 10)
+FALSE_BREAKOUT_LOOKBACK_BARS = safe_int(os.getenv('FALSE_BREAKOUT_LOOKBACK_BARS', '50'), 50)
+FALSE_BREAKOUT_TOLERANCE_PCT = safe_float(os.getenv('FALSE_BREAKOUT_TOLERANCE_PCT', '0.3'), 0.3)
+FALSE_BREAKOUT_MIN_LEVEL_AGE_CANDLES = safe_int(os.getenv('FALSE_BREAKOUT_MIN_LEVEL_AGE_CANDLES', '20'), 20)
+FALSE_BREAKOUT_MAX_BREAKOUT_BARS = safe_int(os.getenv('FALSE_BREAKOUT_MAX_BREAKOUT_BARS', '10'), 10)
+
+# Candle Patterns (Buyout/Sellout Bar)
+BUYOUT_MIN_LOWER_SHADOW_PCT = safe_float(os.getenv('BUYOUT_MIN_LOWER_SHADOW_PCT', '30.0'), 30.0)
+BUYOUT_MIN_CLOSE_NEAR_HIGH_PCT = safe_float(os.getenv('BUYOUT_MIN_CLOSE_NEAR_HIGH_PCT', '80.0'), 80.0)
+SELLOUT_MIN_UPPER_SHADOW_PCT = safe_float(os.getenv('SELLOUT_MIN_UPPER_SHADOW_PCT', '30.0'), 30.0)
+SELLOUT_MIN_CLOSE_NEAR_LOW_PCT = safe_float(os.getenv('SELLOUT_MIN_CLOSE_NEAR_LOW_PCT', '80.0'), 80.0)
+CANDLE_PATTERN_LOOKBACK_BARS = safe_int(os.getenv('CANDLE_PATTERN_LOOKBACK_BARS', '5'), 5)
+
+# Scoring adjustments
+FALSE_BREAKOUT_BASE_CONFIDENCE = safe_int(os.getenv('FALSE_BREAKOUT_BASE_CONFIDENCE', '50'), 50)
+FALSE_BREAKOUT_CHANNEL_DURATION_BONUS_60_DAYS = safe_int(os.getenv('FALSE_BREAKOUT_CHANNEL_DURATION_BONUS_60_DAYS', '10'), 10)
+FALSE_BREAKOUT_CHANNEL_DURATION_BONUS_30_DAYS = safe_int(os.getenv('FALSE_BREAKOUT_CHANNEL_DURATION_BONUS_30_DAYS', '5'), 5)
+FALSE_BREAKOUT_CHANNEL_TOUCHES_BONUS_5 = safe_int(os.getenv('FALSE_BREAKOUT_CHANNEL_TOUCHES_BONUS_5', '10'), 10)
+FALSE_BREAKOUT_CHANNEL_TOUCHES_BONUS_3 = safe_int(os.getenv('FALSE_BREAKOUT_CHANNEL_TOUCHES_BONUS_3', '5'), 5)
+FALSE_BREAKOUT_DEPTH_BONUS_2_PCT = safe_int(os.getenv('FALSE_BREAKOUT_DEPTH_BONUS_2_PCT', '15'), 15)
+FALSE_BREAKOUT_DEPTH_BONUS_1_PCT = safe_int(os.getenv('FALSE_BREAKOUT_DEPTH_BONUS_1_PCT', '10'), 10)
+FALSE_BREAKOUT_DEPTH_BONUS_0_5_PCT = safe_int(os.getenv('FALSE_BREAKOUT_DEPTH_BONUS_0_5_PCT', '5'), 5)
+FALSE_BREAKOUT_RETURN_SPEED_BONUS_2_BARS = safe_int(os.getenv('FALSE_BREAKOUT_RETURN_SPEED_BONUS_2_BARS', '15'), 15)
+FALSE_BREAKOUT_RETURN_SPEED_BONUS_3_BARS = safe_int(os.getenv('FALSE_BREAKOUT_RETURN_SPEED_BONUS_3_BARS', '10'), 10)
+FALSE_BREAKOUT_RETURN_SPEED_BONUS_5_BARS = safe_int(os.getenv('FALSE_BREAKOUT_RETURN_SPEED_BONUS_5_BARS', '5'), 5)
+FALSE_BREAKOUT_VOLUME_RATIO_BONUS_2_0 = safe_int(os.getenv('FALSE_BREAKOUT_VOLUME_RATIO_BONUS_2_0', '10'), 10)
+FALSE_BREAKOUT_VOLUME_RATIO_BONUS_1_5 = safe_int(os.getenv('FALSE_BREAKOUT_VOLUME_RATIO_BONUS_1_5', '5'), 5)
+CANDLE_PATTERN_STRENGTH_BONUS = safe_int(os.getenv('CANDLE_PATTERN_STRENGTH_BONUS', '15'), 15)
+
 
 # ============================================================================
 # CONFIG CLASS
@@ -549,6 +625,7 @@ class Config:
     DEEPSEEK_API_KEY = DEEPSEEK_API_KEY
     ANTHROPIC_API_KEY = ANTHROPIC_API_KEY
     TELEGRAM_BOT_TOKEN = TELEGRAM_BOT_TOKEN
+    TINKOFF_INVEST_TOKEN = TINKOFF_INVEST_TOKEN
 
     # ✅ НОВОЕ: Multi-user support
     TELEGRAM_USER_IDS = TELEGRAM_USER_IDS
@@ -851,6 +928,43 @@ class Config:
     BACKTEST_QUALITY_OB_AGE_FRESH = BACKTEST_QUALITY_OB_AGE_FRESH
     BACKTEST_QUALITY_OB_MAX_SCORE = BACKTEST_QUALITY_OB_MAX_SCORE
     BACKTEST_QUALITY_IMB_FILL_THRESHOLD = BACKTEST_QUALITY_IMB_FILL_THRESHOLD
+
+    # False Breakout Strategy parameters
+    CONSOLIDATION_MIN_DURATION_CANDLES = CONSOLIDATION_MIN_DURATION_CANDLES
+    CONSOLIDATION_MIN_DURATION_DAYS = CONSOLIDATION_MIN_DURATION_DAYS
+    CONSOLIDATION_LOOKBACK_CANDLES = CONSOLIDATION_LOOKBACK_CANDLES
+    CONSOLIDATION_TOLERANCE_PCT = CONSOLIDATION_TOLERANCE_PCT
+    CONSOLIDATION_MAX_WIDTH_PCT = CONSOLIDATION_MAX_WIDTH_PCT
+    CONSOLIDATION_MIN_INSIDE_RATIO = CONSOLIDATION_MIN_INSIDE_RATIO
+    CONSOLIDATION_MIN_TOUCHES = CONSOLIDATION_MIN_TOUCHES
+    CONSOLIDATION_MIN_BARS_AFTER = CONSOLIDATION_MIN_BARS_AFTER
+    CONSOLIDATION_SEARCH_STEP_START = CONSOLIDATION_SEARCH_STEP_START
+    CONSOLIDATION_SEARCH_STEP_SIZE = CONSOLIDATION_SEARCH_STEP_SIZE
+    FALSE_BREAKOUT_MIN_DEPTH_PCT = FALSE_BREAKOUT_MIN_DEPTH_PCT
+    FALSE_BREAKOUT_MAX_RETURN_BARS = FALSE_BREAKOUT_MAX_RETURN_BARS
+    FALSE_BREAKOUT_LOOKBACK_BARS = FALSE_BREAKOUT_LOOKBACK_BARS
+    FALSE_BREAKOUT_TOLERANCE_PCT = FALSE_BREAKOUT_TOLERANCE_PCT
+    FALSE_BREAKOUT_MIN_LEVEL_AGE_CANDLES = FALSE_BREAKOUT_MIN_LEVEL_AGE_CANDLES
+    FALSE_BREAKOUT_MAX_BREAKOUT_BARS = FALSE_BREAKOUT_MAX_BREAKOUT_BARS
+    BUYOUT_MIN_LOWER_SHADOW_PCT = BUYOUT_MIN_LOWER_SHADOW_PCT
+    BUYOUT_MIN_CLOSE_NEAR_HIGH_PCT = BUYOUT_MIN_CLOSE_NEAR_HIGH_PCT
+    SELLOUT_MIN_UPPER_SHADOW_PCT = SELLOUT_MIN_UPPER_SHADOW_PCT
+    SELLOUT_MIN_CLOSE_NEAR_LOW_PCT = SELLOUT_MIN_CLOSE_NEAR_LOW_PCT
+    CANDLE_PATTERN_LOOKBACK_BARS = CANDLE_PATTERN_LOOKBACK_BARS
+    FALSE_BREAKOUT_BASE_CONFIDENCE = FALSE_BREAKOUT_BASE_CONFIDENCE
+    FALSE_BREAKOUT_CHANNEL_DURATION_BONUS_60_DAYS = FALSE_BREAKOUT_CHANNEL_DURATION_BONUS_60_DAYS
+    FALSE_BREAKOUT_CHANNEL_DURATION_BONUS_30_DAYS = FALSE_BREAKOUT_CHANNEL_DURATION_BONUS_30_DAYS
+    FALSE_BREAKOUT_CHANNEL_TOUCHES_BONUS_5 = FALSE_BREAKOUT_CHANNEL_TOUCHES_BONUS_5
+    FALSE_BREAKOUT_CHANNEL_TOUCHES_BONUS_3 = FALSE_BREAKOUT_CHANNEL_TOUCHES_BONUS_3
+    FALSE_BREAKOUT_DEPTH_BONUS_2_PCT = FALSE_BREAKOUT_DEPTH_BONUS_2_PCT
+    FALSE_BREAKOUT_DEPTH_BONUS_1_PCT = FALSE_BREAKOUT_DEPTH_BONUS_1_PCT
+    FALSE_BREAKOUT_DEPTH_BONUS_0_5_PCT = FALSE_BREAKOUT_DEPTH_BONUS_0_5_PCT
+    FALSE_BREAKOUT_RETURN_SPEED_BONUS_2_BARS = FALSE_BREAKOUT_RETURN_SPEED_BONUS_2_BARS
+    FALSE_BREAKOUT_RETURN_SPEED_BONUS_3_BARS = FALSE_BREAKOUT_RETURN_SPEED_BONUS_3_BARS
+    FALSE_BREAKOUT_RETURN_SPEED_BONUS_5_BARS = FALSE_BREAKOUT_RETURN_SPEED_BONUS_5_BARS
+    FALSE_BREAKOUT_VOLUME_RATIO_BONUS_2_0 = FALSE_BREAKOUT_VOLUME_RATIO_BONUS_2_0
+    FALSE_BREAKOUT_VOLUME_RATIO_BONUS_1_5 = FALSE_BREAKOUT_VOLUME_RATIO_BONUS_1_5
+    CANDLE_PATTERN_STRENGTH_BONUS = CANDLE_PATTERN_STRENGTH_BONUS
 
 
 config = Config()

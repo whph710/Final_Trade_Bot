@@ -17,7 +17,7 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-logger = logging.getLogger(__name__)#123
+logger = logging.getLogger(__name__)
 
 
 async def run_telegram_bot():

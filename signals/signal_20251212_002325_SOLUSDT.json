@@ -1,0 +1,55 @@
+{
+  "symbol": "SOLUSDT",
+  "signal": "LONG",
+  "confidence": 72,
+  "entry_price": 134.41,
+  "stop_loss": 127.58,
+  "take_profit_levels": [
+    141.495,
+    148.58,
+    155.665
+  ],
+  "risk_reward_ratio": 2.07,
+  "analysis": "LONG: Канал консолидации 19 дней (VALID), 4 касания верхней и 4 касания нижней границ (STRONG), ширина 14.8% (умеренный канал). Ложный пробой вниз на 5.3% с возвратом за 2 бара (идеально). Выкупной бар силой 85 (очень сильный). Инструмент показал относительную силу, не падая при падении BTC. Оценка: 87/125.",
+  "timestamp": "2025-12-12T00:23:25.252292",
+  "backtest_status": "ACTIVE",
+  "backtest_result": {
+    "outcome": "ACTIVE",
+    "exit_price": 134.41,
+    "pnl_pct": 0,
+    "checked_at": "2025-12-13T11:48:52.260956"
+  },
+  "comprehensive_data": {
+    "current_price": 134.41,
+    "indicators_1h": {
+      "price": 134.41,
+      "ema9": 131.98614369402992,
+      "ema21": 132.4919707310018,
+      "ema50": 133.97172052278765,
+      "rsi": 57.96351418416759,
+      "volume_ratio": 2.7964425820772223
+    },
+    "indicators_4h": {
+      "price": 131.08,
+      "ema9": 133.31012695745105,
+      "ema21": 134.54757363851152,
+      "ema50": 135.2170211985191,
+      "rsi": 42.63607426110614,
+      "volume_ratio": 1.1087763515457778
+    },
+    "market_data": {
+      "funding_rate": -0.00014146,
+      "oi_change_24h": 1.49,
+      "spread_pct": 0.0074
+    },
+    "correlation": {
+      "correlation": 0.959,
+      "should_block": false
+    },
+    "volume_profile": {
+      "poc": 139.3736,
+      "value_area_high": 193.10800000000003,
+      "value_area_low": 125.94000000000001
+    }
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "symbol": "SEIUSDT",
+  "signal": "LONG",
+  "confidence": 72,
+  "entry_price": 0.1306,
+  "stop_loss": 0.1241,
+  "take_profit_levels": [
+    0.1374,
+    0.1442,
+    0.151
+  ],
+  "risk_reward_ratio": 2.09,
+  "analysis": "LONG: Канал консолидации 19 дней (VALID), 4 касания верхней и 5 нижней границ (STRONG), ширина 6.8% (узкий канал). Ложный пробой вниз на 1.8% с возвратом за 2 бара (идеально). Выкупной бар силой 85 (очень сильный). Инструмент показал относительную силу, коррелируя с BTC, но не падая сильнее при его снижении. Оценка: 86/125.",
+  "timestamp": "2025-12-12T00:23:03.594479",
+  "backtest_status": "ACTIVE",
+  "backtest_result": {
+    "outcome": "ACTIVE",
+    "exit_price": 0.1306,
+    "pnl_pct": 0,
+    "checked_at": "2025-12-13T11:48:52.007303"
+  },
+  "comprehensive_data": {
+    "current_price": 0.1306,
+    "indicators_1h": {
+      "price": 0.1306,
+      "ema9": 0.1327603723685725,
+      "ema21": 0.1353675347718051,
+      "ema50": 0.1364777608056896,
+      "rsi": 34.703402130225484,
+      "volume_ratio": 0.9050865545688945
+    },
+    "indicators_4h": {
+      "price": 0.1335,
+      "ema9": 0.13724695209291066,
+      "ema21": 0.13616608533127278,
+      "ema50": 0.1348027762553753,
+      "rsi": 46.37950239008747,
+      "volume_ratio": 1.0196897080101717
+    },
+    "market_data": {
+      "funding_rate": -0.00035841,
+      "oi_change_24h": 3.49,
+      "spread_pct": 0.0758
+    },
+    "correlation": {
+      "correlation": 0.837,
+      "should_block": false
+    },
+    "volume_profile": {
+      "poc": 0.13635,
+      "value_area_high": 0.194526,
+      "value_area_low": 0.129078
+    }
+  }
+}
